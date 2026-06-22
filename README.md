@@ -36,7 +36,7 @@ Set these required environment variables in Vercel:
 ```bash
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
 JWT_SECRET_KEY=use-a-long-random-secret
-CORS_ORIGINS=["https://your-frontend.vercel.app","http://localhost:5173"]
+CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 ```
 
 Neon usually gives a `postgresql://...` URI. You can paste it directly into `DATABASE_URL`; the app converts it to SQLAlchemy's `postgresql+psycopg://...` driver internally.

@@ -1,4 +1,5 @@
 from functools import lru_cache
+import json
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,7 +16,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
-    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enable_otel: bool = False
     ai_provider: str = "local"
     openai_api_key: str | None = None
@@ -27,6 +28,16 @@ class Settings(BaseSettings):
     cloudflare_r2_public_base_url: str | None = None
     cloudflare_r2_endpoint_url: str | None = None
     max_product_image_bytes: int = 5 * 1024 * 1024
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        value = self.cors_origins.strip()
+        if not value:
+            return []
+        if value.startswith("["):
+            parsed = json.loads(value)
+            return [str(item).strip() for item in parsed if str(item).strip()]
+        return [origin.strip() for origin in value.split(",") if origin.strip()]
 
 
 @lru_cache
