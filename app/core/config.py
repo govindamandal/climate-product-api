@@ -31,13 +31,32 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        value = self.cors_origins.strip()
+        value = self.cors_origins.strip().strip("'\"")
+        if value.startswith("CORS_ORIGINS="):
+            value = value.removeprefix("CORS_ORIGINS=").strip().strip("'\"")
         if not value:
-            return []
+            return self._default_cors_origins()
         if value.startswith("["):
             parsed = json.loads(value)
-            return [str(item).strip() for item in parsed if str(item).strip()]
-        return [origin.strip() for origin in value.split(",") if origin.strip()]
+            origins = [str(item).strip() for item in parsed if str(item).strip()]
+        else:
+            origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+        return self._normalize_origins([*origins, *self._default_cors_origins()])
+
+    def _default_cors_origins(self) -> list[str]:
+        return [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://climate-product-web.vercel.app",
+        ]
+
+    def _normalize_origins(self, origins: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for origin in origins:
+            clean_origin = origin.strip().strip("'\"").rstrip("/")
+            if clean_origin and clean_origin not in normalized:
+                normalized.append(clean_origin)
+        return normalized
 
 
 @lru_cache

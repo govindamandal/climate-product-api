@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.core.config import Settings
 
 
 @pytest.fixture()
@@ -62,6 +63,15 @@ def test_auth_preflight_allows_web_origin(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert "POST" in response.headers["access-control-allow-methods"]
+
+
+def test_cors_origins_accept_deployment_env_formats() -> None:
+    settings = Settings(
+        cors_origins="CORS_ORIGINS='https://climate-product-web.vercel.app/, http://localhost:5173'"
+    )
+
+    assert "https://climate-product-web.vercel.app" in settings.cors_origin_list
+    assert "http://localhost:5173" in settings.cors_origin_list
 
 
 def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
