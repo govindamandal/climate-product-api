@@ -65,6 +65,7 @@ def summary(user: CurrentUser, db: DbSession) -> dict:
             "product_id": product.id,
             "name": product.name,
             "category": product.category,
+            "image_url": product.image_url,
             "co2": record.co2_kg,
             "energy": record.energy_kwh,
             "water": record.water_liters,

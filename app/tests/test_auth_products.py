@@ -206,6 +206,7 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
                 "manufacturer": "Analytics Materials",
                 "country": "Germany",
                 "production_method": "Verified production",
+                "image_url": f"https://assets.example.com/{category.lower()}.jpg",
                 "environmental_record": {
                     "co2_kg": co2,
                     "water_liters": 100,
@@ -227,6 +228,7 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
     assert payload["average_sustainability_score"] == 83
     assert payload["category_breakdown"][0]["category"] == "Concrete"
     assert payload["hotspots"][0]["name"] == "Analytics Concrete"
+    assert payload["hotspots"][0]["image_url"] == "https://assets.example.com/concrete.jpg"
     assert payload["score_distribution"][-1]["count"] == 1
 
 
