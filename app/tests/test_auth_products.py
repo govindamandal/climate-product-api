@@ -228,3 +228,85 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
     assert payload["category_breakdown"][0]["category"] == "Concrete"
     assert payload["hotspots"][0]["name"] == "Analytics Concrete"
     assert payload["score_distribution"][-1]["count"] == 1
+
+
+def test_certificate_extraction_review_workflow(client: TestClient) -> None:
+    auth = register(client, "tenant-certificates", "admin@certificates.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    product = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Certificate Concrete",
+            "category": "Concrete",
+            "description": "",
+            "manufacturer": "Certificate Materials",
+            "country": "Germany",
+            "production_method": "Verified production",
+        },
+    ).json()
+
+    extracted = client.post(
+        "/api/v1/certificates/extract",
+        headers=headers,
+        data={"product_id": product["id"]},
+        files={
+            "file": (
+                "epd-en-15804.txt",
+                b"EPD EN 15804 valid until 2028-12-31 GWP 384 kg CO2e",
+                "application/pdf",
+            )
+        },
+    )
+
+    assert extracted.status_code == 201, extracted.text
+    payload = extracted.json()
+    assert payload["product_id"] == product["id"]
+    assert payload["status"] == "needs_review"
+    assert payload["certification_name"] == "EPD EN 15804"
+    assert payload["expiry_date"] == "2028-12-31"
+    assert payload["emission_value"] == 384
+
+    listed = client.get("/api/v1/certificates", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+    corrected = client.patch(
+        f"/api/v1/certificates/{payload['id']}",
+        headers=headers,
+        json={
+            "certification_name": "Verified EPD EN 15804+A2",
+            "emission_value": 372.4,
+            "compliance_information": "Verified against uploaded EPD scope A1-A3.",
+            "status": "approved",
+        },
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["status"] == "approved"
+    assert corrected.json()["emission_value"] == 372.4
+
+
+def test_certificate_extraction_tenant_isolation(client: TestClient) -> None:
+    alpha = register(client, "tenant-cert-alpha", "admin@cert-alpha.example")
+    beta = register(client, "tenant-cert-beta", "admin@cert-beta.example")
+    alpha_headers = {"Authorization": f"Bearer {alpha['access_token']}"}
+    beta_headers = {"Authorization": f"Bearer {beta['access_token']}"}
+
+    extracted = client.post(
+        "/api/v1/certificates/extract",
+        headers=alpha_headers,
+        files={"file": ("fsc-certificate.pdf", b"FSC valid until 2029-01-01", "application/pdf")},
+    )
+    assert extracted.status_code == 201, extracted.text
+    extraction_id = extracted.json()["id"]
+
+    beta_list = client.get("/api/v1/certificates", headers=beta_headers)
+    assert beta_list.status_code == 200
+    assert beta_list.json()["total"] == 0
+
+    beta_update = client.patch(
+        f"/api/v1/certificates/{extraction_id}",
+        headers=beta_headers,
+        json={"status": "approved"},
+    )
+    assert beta_update.status_code == 404
