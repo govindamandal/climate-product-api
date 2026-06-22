@@ -55,6 +55,17 @@ CLOUDFLARE_R2_PUBLIC_BASE_URL=
 
 `CLOUDFLARE_R2_PUBLIC_URL` is also supported as an alias for `CLOUDFLARE_R2_PUBLIC_BASE_URL`.
 
+Use the bucket's public `r2.dev` URL or your custom domain for the public URL. Do not use the private S3 API endpoint:
+
+```bash
+# Correct examples
+CLOUDFLARE_R2_PUBLIC_URL=https://pub-abc123.r2.dev
+CLOUDFLARE_R2_PUBLIC_URL=https://assets.yourdomain.com
+
+# Incorrect: this is the private S3 API endpoint and browser images will fail
+CLOUDFLARE_R2_PUBLIC_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com
+```
+
 After the backend deploys, set the frontend Vercel project variable:
 
 ```bash

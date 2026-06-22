@@ -10,6 +10,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.core.config import Settings
+from app.services.storage_service import ProductImageStorage
 
 
 @pytest.fixture()
@@ -72,6 +73,19 @@ def test_cors_origins_accept_deployment_env_formats() -> None:
 
     assert "https://climate-product-web.vercel.app" in settings.cors_origin_list
     assert "http://localhost:5173" in settings.cors_origin_list
+
+
+def test_r2_public_url_rejects_private_api_endpoint() -> None:
+    storage = ProductImageStorage(
+        Settings(
+            cloudflare_r2_public_url="https://account-id.r2.cloudflarestorage.com",
+        )
+    )
+
+    with pytest.raises(Exception) as exc:
+        storage._public_base_url(storage.settings.cloudflare_r2_public_url)
+
+    assert "not the private S3 API endpoint" in str(exc.value)
 
 
 def test_registration_login_and_product_lifecycle(client: TestClient) -> None:

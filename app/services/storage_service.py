@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import boto3
@@ -47,8 +48,9 @@ class ProductImageStorage:
         public_base_url = (
             self.settings.cloudflare_r2_public_base_url or self.settings.cloudflare_r2_public_url
         )
-        if not bucket or not public_base_url:
+        if not bucket:
             raise HTTPException(status_code=503, detail="Cloudflare R2 storage is not configured")
+        public_base_url = self._public_base_url(public_base_url)
 
         extension = self._extension(file)
         key = f"organizations/{organization_id}/products/{product_id}/images/{uuid4()}{extension}"
@@ -86,3 +88,19 @@ class ProductImageStorage:
         if filename_extension in {".jpg", ".jpeg", ".png", ".webp"}:
             return ".jpg" if filename_extension == ".jpeg" else filename_extension
         return ALLOWED_IMAGE_TYPES[file.content_type or ""]
+
+    def _public_base_url(self, value: str | None) -> str:
+        if not value:
+            raise HTTPException(status_code=503, detail="Cloudflare R2 public URL is not configured")
+
+        public_base_url = value.strip().rstrip("/")
+        hostname = urlparse(public_base_url).hostname or ""
+        if hostname.endswith(".r2.cloudflarestorage.com"):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Cloudflare R2 public URL must use a public bucket URL or custom domain, "
+                    "not the private S3 API endpoint"
+                ),
+            )
+        return public_base_url
