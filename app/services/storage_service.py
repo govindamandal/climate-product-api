@@ -44,7 +44,9 @@ class ProductImageStorage:
 
         client = self._client()
         bucket = self.settings.cloudflare_r2_bucket
-        public_base_url = self.settings.cloudflare_r2_public_base_url
+        public_base_url = (
+            self.settings.cloudflare_r2_public_base_url or self.settings.cloudflare_r2_public_url
+        )
         if not bucket or not public_base_url:
             raise HTTPException(status_code=503, detail="Cloudflare R2 storage is not configured")
 

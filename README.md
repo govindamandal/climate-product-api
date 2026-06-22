@@ -53,6 +53,8 @@ CLOUDFLARE_R2_BUCKET=
 CLOUDFLARE_R2_PUBLIC_BASE_URL=
 ```
 
+`CLOUDFLARE_R2_PUBLIC_URL` is also supported as an alias for `CLOUDFLARE_R2_PUBLIC_BASE_URL`.
+
 After the backend deploys, set the frontend Vercel project variable:
 
 ```bash

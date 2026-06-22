@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     cloudflare_r2_secret_access_key: str | None = None
     cloudflare_r2_bucket: str | None = None
     cloudflare_r2_public_base_url: str | None = None
+    cloudflare_r2_public_url: str | None = None
     cloudflare_r2_endpoint_url: str | None = None
     max_product_image_bytes: int = 5 * 1024 * 1024
 
