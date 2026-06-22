@@ -21,19 +21,19 @@ def seed() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        if db.query(Organization).filter_by(slug="emidat-demo-manufacturing").first():
+        if db.query(Organization).filter_by(slug="demo-manufacturing").first():
             return
         org = Organization(
-            name="Emidat Demo Manufacturing",
-            slug="emidat-demo-manufacturing",
+            name="Demo Manufacturing",
+            slug="demo-manufacturing",
             country="Germany",
         )
         db.add(org)
         db.flush()
         admin = User(
             organization_id=org.id,
-            email="admin@emidat-demo.com",
-            full_name="Mira Keller",
+            email="admin@demo.com",
+            full_name="Demo Admin",
             role=UserRole.ORG_ADMIN,
             hashed_password=hash_password("ClimatePass123!"),
         )
@@ -45,7 +45,7 @@ def seed() -> None:
                 name=name,
                 category=category,
                 description="Commercial building material used in European construction projects.",
-                manufacturer="Emidat Demo Manufacturing",
+                manufacturer="Demo Manufacturing",
                 country="Germany",
                 production_method="Verified batch production with supplier traceability",
                 material_composition={"primary": category, "recycled_content_pct": max(score - 55, 5)},
