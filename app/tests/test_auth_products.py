@@ -10,6 +10,9 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.core.config import Settings
+from app.core.security import hash_password
+from app.models.enums import UserRole
+from app.models.user import User
 from app.services.storage_service import ProductImageStorage
 
 
@@ -31,6 +34,7 @@ def client() -> Generator[TestClient, None, None]:
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.TestingSessionLocal = TestingSessionLocal
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -48,6 +52,28 @@ def register(client: TestClient, slug: str, email: str) -> dict:
         },
     )
     assert response.status_code == 201, response.text
+    return response.json()
+
+
+def create_super_admin(client: TestClient) -> dict:
+    db = client.app.state.TestingSessionLocal()
+    try:
+        user = User(
+            organization_id=None,
+            email="superadmin@example.com",
+            full_name="Platform Admin",
+            role=UserRole.SUPER_ADMIN,
+            hashed_password=hash_password("ClimatePass123!"),
+        )
+        db.add(user)
+        db.commit()
+    finally:
+        db.close()
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "superadmin@example.com", "password": "ClimatePass123!"},
+    )
+    assert response.status_code == 200, response.text
     return response.json()
 
 
@@ -234,6 +260,61 @@ def test_organization_team_management_is_tenant_scoped(client: TestClient) -> No
     assert beta_team.status_code == 200
     assert beta_team.json()["organization"]["slug"] == "tenant-team-beta"
     assert all(item["email"] != "member@team-alpha.example" for item in beta_team.json()["members"])
+
+
+def test_super_admin_platform_management(client: TestClient) -> None:
+    super_auth = create_super_admin(client)
+    headers = {"Authorization": f"Bearer {super_auth['access_token']}"}
+
+    created = client.post(
+        "/api/v1/platform/organizations",
+        headers=headers,
+        json={
+            "name": "Platform Concrete Co",
+            "slug": "platform-concrete",
+            "country": "Germany",
+            "admin_email": "admin@platform-concrete.example",
+            "admin_full_name": "Platform Tenant Admin",
+        },
+    )
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    assert payload["temporary_password"] == "ChangeMeNow!2026"
+    assert payload["organization"]["slug"] == "platform-concrete"
+    assert payload["organization"]["user_count"] == 1
+
+    organizations = client.get("/api/v1/platform/organizations", headers=headers)
+    assert organizations.status_code == 200
+    assert organizations.json()["total"] == 1
+
+    updated = client.patch(
+        f"/api/v1/platform/organizations/{payload['organization']['id']}",
+        headers=headers,
+        json={"subscription_status": "active"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["subscription_status"] == "active"
+
+    analytics = client.get("/api/v1/platform/analytics", headers=headers)
+    assert analytics.status_code == 200
+    assert analytics.json()["organization_count"] == 1
+    assert analytics.json()["active_subscription_count"] == 1
+
+    users = client.get("/api/v1/platform/users", headers=headers)
+    assert users.status_code == 200
+    assert users.json()["total"] == 2
+
+    audit_logs = client.get("/api/v1/platform/audit-logs", headers=headers)
+    assert audit_logs.status_code == 200
+    assert audit_logs.json()["total"] >= 2
+
+
+def test_platform_routes_require_super_admin(client: TestClient) -> None:
+    auth = register(client, "tenant-not-platform", "admin@not-platform.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+
+    response = client.get("/api/v1/platform/analytics", headers=headers)
+    assert response.status_code == 403
 
 
 def test_csv_import_filtering_and_delete(client: TestClient) -> None:
