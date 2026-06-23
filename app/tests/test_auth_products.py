@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.core.security import hash_password
 from app.models.enums import UserRole
 from app.models.user import User
+from app.services.ai_service import LocalAIProvider, build_ai_provider
 from app.services.storage_service import ProductImageStorage
 
 
@@ -315,6 +316,48 @@ def test_platform_routes_require_super_admin(client: TestClient) -> None:
 
     response = client.get("/api/v1/platform/analytics", headers=headers)
     assert response.status_code == 403
+
+
+def test_ai_provider_defaults_to_local_without_remote_credentials() -> None:
+    provider = build_ai_provider(Settings(ai_provider="openai", openai_api_key=None))
+
+    assert isinstance(provider, LocalAIProvider)
+    assert provider.name == "local"
+
+
+def test_ai_advisor_and_report_use_configured_provider_contract(client: TestClient) -> None:
+    auth = register(client, "tenant-ai", "admin@ai.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "AI Concrete",
+            "category": "Concrete",
+            "description": "Concrete with measured impacts.",
+            "manufacturer": "AI Materials",
+            "country": "Germany",
+            "production_method": "Batch plant",
+            "environmental_record": {
+                "co2_kg": 500,
+                "water_liters": 1200,
+                "energy_kwh": 650,
+                "transportation_kg_co2": 110,
+                "recyclability_score": 60,
+                "sustainability_score": 70,
+            },
+        },
+    )
+    product_id = created.json()["id"]
+
+    advisor = client.post(f"/api/v1/ai/products/{product_id}/advisor", headers=headers)
+    report = client.post(f"/api/v1/ai/products/{product_id}/report", headers=headers)
+
+    assert advisor.status_code == 200
+    assert advisor.json()["provider"] == "local"
+    assert advisor.json()["recommendations"]
+    assert report.status_code == 200
+    assert "AI Concrete" in report.json()["summary"]
 
 
 def test_csv_import_filtering_and_delete(client: TestClient) -> None:

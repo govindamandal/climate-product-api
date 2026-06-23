@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enable_otel: bool = False
     ai_provider: str = "local"
+    ai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = None
+    anthropic_model: str = "claude-3-5-sonnet-latest"
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
     anthropic_api_key: str | None = None
     cloudflare_r2_account_id: str | None = None
     cloudflare_r2_access_key_id: str | None = None
