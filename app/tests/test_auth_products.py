@@ -516,3 +516,35 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
     assert payload["category_breakdown"][0]["category"] == "Concrete"
     assert payload["hotspots"][0]["name"] == "Analytics Concrete"
     assert payload["score_distribution"][-1]["count"] == 1
+
+
+def test_certificate_extraction_captures_structured_fields(client: TestClient) -> None:
+    auth = register(client, "tenant-certificate", "admin@certificate.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    certificate_text = """
+    Environmental Product Declaration
+    Program operator: Institut Bauen und Umwelt
+    Declaration number: EPD-ABC-2026-001
+    Standard: EN 15804 and ISO 14025
+    Declared unit: 1 m2 facade panel
+    Valid until: 2029-12-31
+    GWP-total A1-A3: 312.4 kg CO2e
+    """
+
+    response = client.post(
+        "/api/v1/certificates/extract",
+        headers=headers,
+        files={"file": ("facade_epd.txt", certificate_text, "text/plain")},
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["certification_name"] == "EPD EN 15804"
+    assert payload["expiry_date"] == "2029-12-31"
+    assert payload["emission_value"] == 312.4
+    assert payload["extracted_json"]["workflow"] == "pdf_text_field_extraction"
+    assert payload["extracted_json"]["fields"]["issuer"] == "Institut Bauen und Umwelt"
+    assert payload["extracted_json"]["fields"]["declaration_number"] == "EPD-ABC-2026-001"
+    assert payload["extracted_json"]["fields"]["declared_unit"] == "1 m2 facade panel"
+    assert payload["extracted_json"]["overall_confidence"] > 0.7
+    assert payload["status"] == "needs_review"

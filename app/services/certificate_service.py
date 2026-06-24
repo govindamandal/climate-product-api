@@ -1,7 +1,9 @@
 import re
+from io import BytesIO
 from datetime import date
 
 from fastapi import HTTPException, UploadFile
+from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from app.models.certificate import CertificateExtraction
@@ -28,7 +30,7 @@ class CertificateExtractionService:
     async def extract(self, user: User, file: UploadFile, product_id: str | None) -> CertificateExtraction:
         organization_id = self._organization_id(user)
         content = await file.read()
-        text = self._decode_content(content)
+        text = self._decode_content(file.filename, content)
         parsed = self._extract_fields(file.filename, text, len(content))
         extraction = CertificateExtraction(
             organization_id=organization_id,
@@ -80,25 +82,40 @@ class CertificateExtractionService:
             raise HTTPException(status_code=400, detail="User is not attached to an organization")
         return user.organization_id
 
-    def _decode_content(self, content: bytes) -> str:
-        return content[:20000].decode("utf-8", errors="ignore")
+    def _decode_content(self, file_name: str, content: bytes) -> str:
+        if file_name.lower().endswith(".pdf"):
+            try:
+                reader = PdfReader(BytesIO(content))
+                return "\n".join((page.extract_text() or "") for page in reader.pages)[:50000]
+            except Exception:
+                return content[:50000].decode("utf-8", errors="ignore")
+        return content[:50000].decode("utf-8", errors="ignore")
 
     def _extract_fields(self, file_name: str, text: str, byte_count: int) -> dict:
         searchable = f"{file_name}\n{text}"
         guessed_name = file_name.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
-        known_certification = re.search(
-            r"(EPD\s*(?:EN\s*)?15804|ISO\s*14025|Cradle\s*to\s*Cradle|FSC|PEFC|BREEAM|LEED)",
-            searchable,
-            re.IGNORECASE,
+        certification = self._find_certification(searchable)
+        issuer = self._find_labeled_text(searchable, ["issuer", "program operator", "verification body"])
+        declaration_number = self._find_labeled_text(
+            searchable, ["declaration number", "registration number", "certificate number", "epd number"]
         )
+        declared_unit = self._find_labeled_text(searchable, ["declared unit", "functional unit"])
         expiry = self._find_expiry_date(searchable)
         emission = self._find_emission_value(searchable)
-        certification_name = known_certification.group(1).upper() if known_certification else guessed_name
+        certification_name = certification["value"] if certification else guessed_name
         compliance = (
             "Extracted fields require manual verification before compliance use."
-            if not known_certification
-            else f"{certification_name} detected; verify issuer, scope, and declared unit."
+            if not certification
+            else f"{certification_name} detected; verify issuer, scope, declared unit, and GWP value."
         )
+        field_confidence = {
+            "certification_name": 0.9 if certification else 0.45,
+            "expiry_date": 0.78 if expiry else 0.2,
+            "emission_value": 0.82 if emission is not None else 0.2,
+            "issuer": 0.7 if issuer else 0.2,
+            "declaration_number": 0.74 if declaration_number else 0.2,
+            "declared_unit": 0.72 if declared_unit else 0.2,
+        }
         return {
             "certification_name": certification_name,
             "expiry_date": expiry,
@@ -106,22 +123,74 @@ class CertificateExtractionService:
             "compliance_information": compliance,
             "extracted_json": {
                 "bytes": byte_count,
-                "workflow": "deterministic_document_extraction",
-                "confidence": {
-                    "certification_name": 0.82 if known_certification else 0.48,
-                    "expiry_date": 0.72 if expiry else 0.2,
-                    "emission_value": 0.74 if emission is not None else 0.2,
+                "characters_extracted": len(text),
+                "workflow": "pdf_text_field_extraction",
+                "confidence": field_confidence,
+                "overall_confidence": round(sum(field_confidence.values()) / len(field_confidence), 2),
+                "fields": {
+                    "certification_name": certification_name,
+                    "issuer": issuer["value"] if issuer else None,
+                    "declaration_number": declaration_number["value"] if declaration_number else None,
+                    "declared_unit": declared_unit["value"] if declared_unit else None,
+                    "expiry_date": expiry.isoformat() if expiry else None,
+                    "emission_value": emission,
+                },
+                "evidence": {
+                    "certification_name": certification["evidence"] if certification else None,
+                    "issuer": issuer["evidence"] if issuer else None,
+                    "declaration_number": declaration_number["evidence"] if declaration_number else None,
+                    "declared_unit": declared_unit["evidence"] if declared_unit else None,
+                    "expiry_date": self._evidence_for(searchable, "valid") if expiry else None,
+                    "emission_value": self._evidence_for(searchable, "co2") if emission is not None else None,
                 },
                 "manual_review_required": True,
             },
         }
 
-    def _find_expiry_date(self, text: str) -> date | None:
+    def _find_certification(self, text: str) -> dict | None:
         match = re.search(
-            r"(?:expir(?:y|es|ation)|valid\s+until)\D*(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})",
+            r"(EPD\s*(?:EN\s*)?15804|EN\s*15804|ISO\s*14025|Cradle\s*to\s*Cradle|FSC|PEFC|BREEAM|LEED)",
             text,
             re.IGNORECASE,
         )
+        if not match:
+            return None
+        value = match.group(1).upper().replace("  ", " ")
+        if value == "EN 15804":
+            value = "EPD EN 15804"
+        return {"value": value, "evidence": self._snippet(text, match.start(), match.end())}
+
+    def _find_labeled_text(self, text: str, labels: list[str]) -> dict | None:
+        label_pattern = "|".join(re.escape(label) for label in labels)
+        match = re.search(
+            rf"(?:{label_pattern})\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9 ._/-]{{1,120}})",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        value = re.split(r"[\n\r]", match.group(1).strip())[0].strip(" .")
+        return {"value": value, "evidence": self._snippet(text, match.start(), match.end())}
+
+    def _find_expiry_date(self, text: str) -> date | None:
+        match = re.search(
+            r"(?:expir(?:y|es|ation)|valid\s+until|validity)\D*(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            match = re.search(
+                r"(?:expir(?:y|es|ation)|valid\s+until|validity)\D*(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})",
+                text,
+                re.IGNORECASE,
+            )
+            if not match:
+                return None
+            day, month, year = (int(value) for value in match.groups())
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
         if not match:
             return None
         year, month, day = (int(value) for value in match.groups())
@@ -132,8 +201,18 @@ class CertificateExtractionService:
 
     def _find_emission_value(self, text: str) -> float | None:
         match = re.search(
-            r"(\d+(?:\.\d+)?)\s*(?:kg\s*)?(?:CO2e|CO2-eq|CO₂e)",
+            r"(?:GWP(?:-total)?|global warming potential|A1-A3|carbon footprint)?\D{0,40}"
+            r"(\d+(?:\.\d+)?)\s*(?:kg\s*)?(?:CO2e|CO2-eq|CO₂e|kg\s*CO2\s*eq)",
             text,
             re.IGNORECASE,
         )
         return float(match.group(1)) if match else None
+
+    def _evidence_for(self, text: str, needle: str) -> str | None:
+        index = text.lower().find(needle.lower())
+        if index < 0:
+            return None
+        return self._snippet(text, index, index + len(needle))
+
+    def _snippet(self, text: str, start: int, end: int) -> str:
+        return " ".join(text[max(0, start - 80) : min(len(text), end + 120)].split())
