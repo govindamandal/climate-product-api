@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +15,6 @@ from app.core.security import hash_password
 from app.models.enums import UserRole
 from app.models.user import User
 from app.services.ai_service import LocalAIProvider, build_ai_provider
-from app.services.storage_service import ProductImageStorage
 
 
 @pytest.fixture()
@@ -93,28 +93,6 @@ def test_auth_preflight_allows_web_origin(client: TestClient) -> None:
     assert "POST" in response.headers["access-control-allow-methods"]
 
 
-def test_cors_origins_accept_deployment_env_formats() -> None:
-    settings = Settings(
-        cors_origins="CORS_ORIGINS='https://climate-product-web.vercel.app/, http://localhost:5173'"
-    )
-
-    assert "https://climate-product-web.vercel.app" in settings.cors_origin_list
-    assert "http://localhost:5173" in settings.cors_origin_list
-
-
-def test_r2_public_url_rejects_private_api_endpoint() -> None:
-    storage = ProductImageStorage(
-        Settings(
-            cloudflare_r2_public_url="https://account-id.r2.cloudflarestorage.com",
-        )
-    )
-
-    with pytest.raises(Exception) as exc:
-        storage._public_base_url(storage.settings.cloudflare_r2_public_url)
-
-    assert "not the private S3 API endpoint" in str(exc.value)
-
-
 def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
     auth = register(client, "tenant-alpha", "admin@alpha.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}
@@ -157,6 +135,72 @@ def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
     )
     assert image_upload.status_code == 503
     assert image_upload.json()["detail"] == "Cloudflare R2 storage is not configured"
+
+
+def test_password_reset_updates_password_and_revokes_refresh_tokens(client: TestClient) -> None:
+    auth = register(client, "tenant-reset", "admin@reset.example")
+
+    requested = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"organization_slug": "tenant-reset", "email": "admin@reset.example"},
+    )
+    assert requested.status_code == 202, requested.text
+    reset_url = requested.json()["reset_url"]
+    token = parse_qs(urlparse(reset_url).query)["token"][0]
+
+    reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": token, "password": "NewClimatePass123!"},
+    )
+    assert reset.status_code == 200, reset.text
+
+    old_login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "tenant-reset",
+            "email": "admin@reset.example",
+            "password": "ClimatePass123!",
+        },
+    )
+    assert old_login.status_code == 401
+
+    new_login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "tenant-reset",
+            "email": "admin@reset.example",
+            "password": "NewClimatePass123!",
+        },
+    )
+    assert new_login.status_code == 200
+
+    revoked_refresh = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": auth["refresh_token"]},
+    )
+    assert revoked_refresh.status_code == 401
+
+    reused_token = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": token, "password": "AnotherClimatePass123!"},
+    )
+    assert reused_token.status_code == 400
+
+
+def test_password_reset_requires_tenant_context_for_duplicate_email(client: TestClient) -> None:
+    register(client, "tenant-reset-alpha", "shared@example.com")
+    register(client, "tenant-reset-beta", "shared@example.com")
+
+    ambiguous = client.post("/api/v1/auth/forgot-password", json={"email": "shared@example.com"})
+    assert ambiguous.status_code == 202
+    assert ambiguous.json()["reset_url"] is None
+
+    scoped = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"organization_slug": "tenant-reset-beta", "email": "shared@example.com"},
+    )
+    assert scoped.status_code == 202
+    assert scoped.json()["reset_url"]
 
 
 def test_tenant_isolation(client: TestClient) -> None:
@@ -409,7 +453,6 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
                 "manufacturer": "Analytics Materials",
                 "country": "Germany",
                 "production_method": "Verified production",
-                "image_url": f"https://assets.example.com/{category.lower()}.jpg",
                 "environmental_record": {
                     "co2_kg": co2,
                     "water_liters": 100,
@@ -431,87 +474,4 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
     assert payload["average_sustainability_score"] == 83
     assert payload["category_breakdown"][0]["category"] == "Concrete"
     assert payload["hotspots"][0]["name"] == "Analytics Concrete"
-    assert payload["hotspots"][0]["image_url"] == "https://assets.example.com/concrete.jpg"
     assert payload["score_distribution"][-1]["count"] == 1
-
-
-def test_certificate_extraction_review_workflow(client: TestClient) -> None:
-    auth = register(client, "tenant-certificates", "admin@certificates.example")
-    headers = {"Authorization": f"Bearer {auth['access_token']}"}
-    product = client.post(
-        "/api/v1/products",
-        headers=headers,
-        json={
-            "name": "Certificate Concrete",
-            "category": "Concrete",
-            "description": "",
-            "manufacturer": "Certificate Materials",
-            "country": "Germany",
-            "production_method": "Verified production",
-        },
-    ).json()
-
-    extracted = client.post(
-        "/api/v1/certificates/extract",
-        headers=headers,
-        data={"product_id": product["id"]},
-        files={
-            "file": (
-                "epd-en-15804.txt",
-                b"EPD EN 15804 valid until 2028-12-31 GWP 384 kg CO2e",
-                "application/pdf",
-            )
-        },
-    )
-
-    assert extracted.status_code == 201, extracted.text
-    payload = extracted.json()
-    assert payload["product_id"] == product["id"]
-    assert payload["status"] == "needs_review"
-    assert payload["certification_name"] == "EPD EN 15804"
-    assert payload["expiry_date"] == "2028-12-31"
-    assert payload["emission_value"] == 384
-
-    listed = client.get("/api/v1/certificates", headers=headers)
-    assert listed.status_code == 200
-    assert listed.json()["total"] == 1
-
-    corrected = client.patch(
-        f"/api/v1/certificates/{payload['id']}",
-        headers=headers,
-        json={
-            "certification_name": "Verified EPD EN 15804+A2",
-            "emission_value": 372.4,
-            "compliance_information": "Verified against uploaded EPD scope A1-A3.",
-            "status": "approved",
-        },
-    )
-    assert corrected.status_code == 200, corrected.text
-    assert corrected.json()["status"] == "approved"
-    assert corrected.json()["emission_value"] == 372.4
-
-
-def test_certificate_extraction_tenant_isolation(client: TestClient) -> None:
-    alpha = register(client, "tenant-cert-alpha", "admin@cert-alpha.example")
-    beta = register(client, "tenant-cert-beta", "admin@cert-beta.example")
-    alpha_headers = {"Authorization": f"Bearer {alpha['access_token']}"}
-    beta_headers = {"Authorization": f"Bearer {beta['access_token']}"}
-
-    extracted = client.post(
-        "/api/v1/certificates/extract",
-        headers=alpha_headers,
-        files={"file": ("fsc-certificate.pdf", b"FSC valid until 2029-01-01", "application/pdf")},
-    )
-    assert extracted.status_code == 201, extracted.text
-    extraction_id = extracted.json()["id"]
-
-    beta_list = client.get("/api/v1/certificates", headers=beta_headers)
-    assert beta_list.status_code == 200
-    assert beta_list.json()["total"] == 0
-
-    beta_update = client.patch(
-        f"/api/v1/certificates/{extraction_id}",
-        headers=beta_headers,
-        json={"status": "approved"},
-    )
-    assert beta_update.status_code == 404

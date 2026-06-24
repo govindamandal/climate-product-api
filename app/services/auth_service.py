@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -13,11 +14,13 @@ from app.core.security import (
 )
 from app.models.enums import AuditAction, UserRole
 from app.models.organization import Organization
-from app.models.user import RefreshToken, User
+from app.models.user import PasswordResetToken, RefreshToken, User
 from app.repositories.organizations import OrganizationRepository
-from app.repositories.users import RefreshTokenRepository, UserRepository
-from app.schemas.auth import AuthTokens, LoginRequest, RegisterRequest
+from app.repositories.users import PasswordResetTokenRepository, RefreshTokenRepository, UserRepository
+from app.schemas.auth import AuthTokens, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest, ResetPasswordRequest
 from app.services.audit_service import AuditService
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -84,6 +87,64 @@ class AuthService:
         self.db.flush()
         self.db.commit()
         return self._issue_tokens(token.user)
+
+    def request_password_reset(self, payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
+        user = self._resolve_reset_user(payload)
+        message = "If the account exists, password reset instructions will be sent."
+        if not user or not user.is_active:
+            return ForgotPasswordResponse(message=message)
+
+        raw_token, token_hash = create_refresh_token()
+        expires_at = datetime.utcnow() + timedelta(minutes=self.settings.password_reset_token_expire_minutes)
+        self.db.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
+        AuditService(self.db).record(
+            action=AuditAction.UPDATE,
+            entity_type="password_reset",
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_id=user.id,
+        )
+        self.db.commit()
+        reset_url = f"{self.settings.frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
+        logger.info("password_reset_requested", extra={"user_id": user.id, "reset_url": reset_url})
+        if self.settings.environment in {"local", "development", "test"}:
+            return ForgotPasswordResponse(message=message, reset_url=reset_url)
+        return ForgotPasswordResponse(message=message)
+
+    def reset_password(self, payload: ResetPasswordRequest) -> dict:
+        reset_token = PasswordResetTokenRepository(self.db).by_hash(hash_token(payload.token))
+        if not reset_token or reset_token.used_at or reset_token.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
+        user = reset_token.user
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
+
+        user.hashed_password = hash_password(payload.password)
+        reset_token.used_at = datetime.utcnow()
+        refresh_tokens = RefreshTokenRepository(self.db).active_for_user(user.id)
+        for token in refresh_tokens:
+            token.revoked_at = datetime.utcnow()
+        AuditService(self.db).record(
+            action=AuditAction.UPDATE,
+            entity_type="password",
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_id=user.id,
+        )
+        self.db.commit()
+        return {"message": "Password has been reset. Please sign in with your new password."}
+
+    def _resolve_reset_user(self, payload: ForgotPasswordRequest) -> User | None:
+        user_repo = UserRepository(self.db)
+        if payload.organization_slug:
+            org = OrganizationRepository(self.db).by_slug(payload.organization_slug)
+            if not org:
+                return None
+            return user_repo.by_email(payload.email, org.id)
+        matches = user_repo.by_email_all(payload.email)
+        if len(matches) != 1:
+            return None
+        return matches[0]
 
     def _issue_tokens(self, user: User) -> AuthTokens:
         access_token = create_access_token(

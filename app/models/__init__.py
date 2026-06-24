@@ -2,7 +2,7 @@ from app.models.audit import AuditLog
 from app.models.certificate import CertificateExtraction
 from app.models.organization import Organization
 from app.models.product import EnvironmentalRecord, Product
-from app.models.user import RefreshToken, User
+from app.models.user import PasswordResetToken, RefreshToken, User
 
 __all__ = [
     "AuditLog",
@@ -10,6 +10,7 @@ __all__ = [
     "EnvironmentalRecord",
     "Organization",
     "Product",
+    "PasswordResetToken",
     "RefreshToken",
     "User",
 ]

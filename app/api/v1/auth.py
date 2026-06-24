@@ -1,12 +1,14 @@
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.auth import (
     AuthTokens,
     ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     UserRead,
 )
 from app.services.auth_service import AuthService
@@ -29,10 +31,14 @@ def refresh(payload: RefreshRequest, db: DbSession) -> AuthTokens:
     return AuthService(db).refresh(payload.refresh_token)
 
 
-@router.post("/forgot-password", status_code=202)
-def forgot_password(payload: ForgotPasswordRequest, background_tasks: BackgroundTasks) -> dict:
-    background_tasks.add_task(lambda: payload.email)
-    return {"message": "If the account exists, password reset instructions will be sent."}
+@router.post("/forgot-password", response_model=ForgotPasswordResponse, status_code=202)
+def forgot_password(payload: ForgotPasswordRequest, db: DbSession) -> ForgotPasswordResponse:
+    return AuthService(db).request_password_reset(payload)
+
+
+@router.post("/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: DbSession) -> dict:
+    return AuthService(db).reset_password(payload)
 
 
 @router.get("/me", response_model=UserRead)

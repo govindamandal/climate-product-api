@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    password_reset_token_expire_minutes: int = 30
+    frontend_base_url: str = "http://localhost:5173"
+    cors_origins: str | list[str] = "http://localhost:5173,http://127.0.0.1:5173"
     enable_otel: bool = False
     ai_provider: str = "local"
     ai_model: str = "gpt-4o-mini"
@@ -36,16 +38,19 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        value = self.cors_origins.strip().strip("'\"")
-        if value.startswith("CORS_ORIGINS="):
-            value = value.removeprefix("CORS_ORIGINS=").strip().strip("'\"")
-        if not value:
-            return self._default_cors_origins()
-        if value.startswith("["):
-            parsed = json.loads(value)
-            origins = [str(item).strip() for item in parsed if str(item).strip()]
+        if isinstance(self.cors_origins, list):
+            origins = self.cors_origins
         else:
-            origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+            value = self.cors_origins.strip().strip("'\"")
+            if value.startswith("CORS_ORIGINS="):
+                value = value.removeprefix("CORS_ORIGINS=").strip().strip("'\"")
+            if not value:
+                return self._default_cors_origins()
+            if value.startswith("["):
+                parsed = json.loads(value)
+                origins = [str(item).strip() for item in parsed if str(item).strip()]
+            else:
+                origins = [origin.strip() for origin in value.split(",") if origin.strip()]
         return self._normalize_origins([*origins, *self._default_cors_origins()])
 
     def _default_cors_origins(self) -> list[str]:

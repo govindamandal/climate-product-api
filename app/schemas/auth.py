@@ -24,6 +24,17 @@ class RefreshRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+    organization_slug: str | None = Field(default=None, min_length=2, max_length=120, pattern=r"^[a-z0-9-]+$")
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_url: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=255)
+    password: str = Field(min_length=10, max_length=128)
 
 
 class UserRead(BaseModel):
