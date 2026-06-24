@@ -45,6 +45,13 @@ class CacheService:
         except RedisError as exc:
             logger.warning("cache_delete_failed", extra={"key": key, "error": str(exc)})
 
+    def ping(self) -> bool:
+        try:
+            return bool(self.client.ping())
+        except RedisError as exc:
+            logger.warning("cache_ping_failed", extra={"error": str(exc)})
+            return False
+
 
 def analytics_cache_key(organization_id: str) -> str:
     return f"analytics:summary:{organization_id}"

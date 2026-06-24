@@ -94,6 +94,14 @@ def test_auth_preflight_allows_web_origin(client: TestClient) -> None:
     assert "POST" in response.headers["access-control-allow-methods"]
 
 
+def test_health_includes_trace_headers(client: TestClient) -> None:
+    response = client.get("/health", headers={"x-request-id": "test-request-id"})
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "test-request-id"
+    assert float(response.headers["x-process-time-ms"]) >= 0
+
+
 def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
     auth = register(client, "tenant-alpha", "admin@alpha.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}
