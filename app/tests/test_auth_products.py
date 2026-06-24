@@ -448,6 +448,69 @@ def test_organization_team_management_is_tenant_scoped(client: TestClient) -> No
     assert all(item["email"] != "member@team-alpha.example" for item in beta_team.json()["members"])
 
 
+def test_org_user_permissions_allow_contribution_but_block_admin_actions(client: TestClient) -> None:
+    auth = register(client, "tenant-rbac", "admin@rbac.example")
+    admin_headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=admin_headers,
+        json={
+            "name": "RBAC Facade Panel",
+            "category": "Facade",
+            "description": "Permission scoped product.",
+            "manufacturer": "RBAC Materials",
+            "country": "Germany",
+            "production_method": "Precast",
+        },
+    )
+    assert created.status_code == 201, created.text
+    product_id = created.json()["id"]
+
+    invited = client.post(
+        "/api/v1/organizations/invites",
+        headers=admin_headers,
+        json={
+            "email": "contributor@rbac.example",
+            "full_name": "Product Contributor",
+            "role": "org_user",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "tenant-rbac",
+            "email": "contributor@rbac.example",
+            "password": "ChangeMeNow!2026",
+        },
+    )
+    assert login.status_code == 200, login.text
+    user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    updated = client.patch(
+        f"/api/v1/products/{product_id}",
+        headers=user_headers,
+        json={"description": "Contributor updated the product description."},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["description"] == "Contributor updated the product description."
+
+    for method, path in [
+        ("delete", f"/api/v1/products/{product_id}"),
+        ("post", f"/api/v1/passports/{product_id}/shares"),
+        ("post", "/api/v1/organizations/invites"),
+        ("get", "/api/v1/organizations/audit-logs"),
+    ]:
+        request = getattr(client, method)
+        response = (
+            request(path, headers=user_headers, json={})
+            if method == "post"
+            else request(path, headers=user_headers)
+        )
+        assert response.status_code == 403, response.text
+
+
 def test_super_admin_platform_management(client: TestClient) -> None:
     super_auth = create_super_admin(client)
     headers = {"Authorization": f"Bearer {super_auth['access_token']}"}

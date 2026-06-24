@@ -39,7 +39,11 @@ def team(user: CurrentUser, db: DbSession) -> TeamRead:
     return TeamRead(organization=org, members=UserRepository(db).members(user.organization_id))
 
 
-@router.get("/audit-logs", response_model=AuditLogList)
+@router.get(
+    "/audit-logs",
+    response_model=AuditLogList,
+    dependencies=[Depends(require_roles(UserRole.ORG_ADMIN, UserRole.SUPER_ADMIN))],
+)
 def audit_logs(
     user: CurrentUser,
     db: DbSession,

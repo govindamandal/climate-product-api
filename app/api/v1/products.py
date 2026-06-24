@@ -1,7 +1,8 @@
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, require_roles
 from app.core.config import get_settings
+from app.models.enums import UserRole
 from app.schemas.product import (
     EnvironmentalRecordCreate,
     ProductCreate,
@@ -59,7 +60,11 @@ def update_product(
     return ProductService(db).update_product(user, product_id, payload)
 
 
-@router.delete("/{product_id}", status_code=204)
+@router.delete(
+    "/{product_id}",
+    status_code=204,
+    dependencies=[Depends(require_roles(UserRole.ORG_ADMIN, UserRole.SUPER_ADMIN))],
+)
 def delete_product(product_id: str, user: CurrentUser, db: DbSession) -> None:
     ProductService(db).delete_product(user, product_id)
 
