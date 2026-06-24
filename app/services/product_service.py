@@ -17,6 +17,7 @@ from app.schemas.product import (
     ProductUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.cache_service import CacheService, analytics_cache_key
 
 
 class ProductService:
@@ -77,6 +78,7 @@ class ProductService:
             entity_id=product.id,
         )
         self.db.commit()
+        self._invalidate_analytics(user)
         return self.get_product(user, product.id)
 
     def get_product(self, user: User, product_id: str) -> Product:
@@ -100,6 +102,7 @@ class ProductService:
             metadata={"fields": list(payload.model_dump(exclude_unset=True).keys())},
         )
         self.db.commit()
+        self._invalidate_analytics(user)
         return self.get_product(user, product_id)
 
     def add_environmental_record(
@@ -115,6 +118,7 @@ class ProductService:
             entity_id=product.id,
         )
         self.db.commit()
+        self._invalidate_analytics(user)
         return self.get_product(user, product_id)
 
     def set_product_image(self, user: User, product_id: str, *, image_url: str, image_key: str) -> Product:
@@ -129,6 +133,7 @@ class ProductService:
             entity_id=product.id,
         )
         self.db.commit()
+        self._invalidate_analytics(user)
         return self.get_product(user, product_id)
 
     def delete_product(self, user: User, product_id: str) -> None:
@@ -142,6 +147,7 @@ class ProductService:
         )
         self.db.delete(product)
         self.db.commit()
+        self._invalidate_analytics(user)
 
     def import_csv(self, user: User, content: bytes) -> ProductImportResult:
         if not user.organization_id:
@@ -179,6 +185,7 @@ class ProductService:
             metadata={"created": created, "errors": len(errors)},
         )
         self.db.commit()
+        self._invalidate_analytics(user)
         return ProductImportResult(created=created, skipped=len(errors), errors=errors)
 
     def _row_to_payload(self, row: dict[str, str | None]) -> ProductCreate:
@@ -239,3 +246,7 @@ class ProductService:
         self.db.add(record)
         self.db.flush()
         return record
+
+    def _invalidate_analytics(self, user: User) -> None:
+        if user.organization_id:
+            CacheService().delete(analytics_cache_key(user.organization_id))

@@ -3,7 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.config import get_settings
 from app.models.product import EnvironmentalRecord, Product
+from app.services.cache_service import CacheService, analytics_cache_key
 
 router = APIRouter(prefix="/analytics", tags=["Sustainability Analytics"])
 
@@ -12,13 +14,29 @@ router = APIRouter(prefix="/analytics", tags=["Sustainability Analytics"])
 def summary(user: CurrentUser, db: DbSession) -> dict:
     if not user.organization_id:
         return {}
+    cache = CacheService()
+    cache_key = analytics_cache_key(user.organization_id)
+    cached = cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    payload = build_summary(user.organization_id, db)
+    cache.set_json(
+        cache_key,
+        payload,
+        ttl_seconds=get_settings().analytics_cache_ttl_seconds,
+    )
+    return payload
+
+
+def build_summary(organization_id: str, db: DbSession) -> dict:
     products = db.scalars(
         select(Product)
         .options(selectinload(Product.environmental_records))
-        .where(Product.organization_id == user.organization_id)
+        .where(Product.organization_id == organization_id)
     ).all()
     rows = db.scalars(
-        select(EnvironmentalRecord).where(EnvironmentalRecord.organization_id == user.organization_id)
+        select(EnvironmentalRecord).where(EnvironmentalRecord.organization_id == organization_id)
     ).all()
     latest_records = [
         (product, product.environmental_records[0])
@@ -65,7 +83,6 @@ def summary(user: CurrentUser, db: DbSession) -> dict:
             "product_id": product.id,
             "name": product.name,
             "category": product.category,
-            "image_url": product.image_url,
             "co2": record.co2_kg,
             "energy": record.energy_kwh,
             "water": record.water_liters,
