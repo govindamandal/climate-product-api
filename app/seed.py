@@ -1,6 +1,6 @@
 from app.core.security import hash_password
-from app.db.base import Base
-from app.db.session import SessionLocal, engine
+from app.db.migrations import run_migrations
+from app.db.session import SessionLocal
 from app.models.enums import UserRole
 from app.models.organization import Organization
 from app.models.product import EnvironmentalRecord, Product
@@ -18,7 +18,7 @@ PRODUCTS = [
 
 
 def seed() -> None:
-    Base.metadata.create_all(bind=engine)
+    run_migrations()
     db = SessionLocal()
     try:
         if not db.query(User).filter_by(email="superadmin@demo.com", organization_id=None).first():

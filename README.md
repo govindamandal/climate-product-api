@@ -25,6 +25,12 @@ Seed demo data:
 python -m app.seed
 ```
 
+Run migrations:
+
+```bash
+alembic upgrade head
+```
+
 API docs are available at `http://localhost:8000/docs`.
 
 ## Vercel Deployment
@@ -40,6 +46,18 @@ CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 ```
 
 Neon usually gives a `postgresql://...` URI. You can paste it directly into `DATABASE_URL`; the app converts it to SQLAlchemy's `postgresql+psycopg://...` driver internally.
+
+Run migrations against the production database after setting `DATABASE_URL`:
+
+```bash
+alembic upgrade head
+```
+
+If the database was created by an older build before Alembic version tracking, run this once before future upgrades:
+
+```bash
+alembic stamp head
+```
 
 Optional environment variables:
 

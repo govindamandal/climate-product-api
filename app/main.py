@@ -8,9 +8,6 @@ from uuid import uuid4
 from app.api.v1.router import api_router
 from app.api.deps import DbSession
 from app.core.config import get_settings
-from app.db.base import Base
-from app.db.schema_guard import ensure_runtime_columns
-from app.db.session import engine
 from app.observability.logging import configure_logging
 from app.services.cache_service import CacheService
 
@@ -29,8 +26,6 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 
 def create_app() -> FastAPI:
-    Base.metadata.create_all(bind=engine)
-    ensure_runtime_columns(engine)
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
