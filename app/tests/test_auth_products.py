@@ -644,6 +644,47 @@ def test_product_benchmarks_include_category_context(client: TestClient) -> None
     assert low_carbon["co2_percentile"] > 0
 
 
+def test_compliance_report_builder_scores_evidence_readiness(client: TestClient) -> None:
+    auth = register(client, "tenant-compliance", "admin@compliance.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Compliance Facade Panel",
+            "category": "Facade",
+            "description": "Panel with compliance evidence.",
+            "manufacturer": "Compliance Materials",
+            "country": "Germany",
+            "production_method": "Precast",
+            "material_composition": {"cement": 32, "aggregate": 58, "recycled_content_pct": 18},
+            "certifications": [{"name": "EPD EN 15804", "status": "verified"}],
+            "environmental_record": {
+                "co2_kg": 312,
+                "water_liters": 820,
+                "energy_kwh": 410,
+                "transportation_kg_co2": 35,
+                "recyclability_score": 78,
+                "sustainability_score": 82,
+            },
+        },
+    )
+    product_id = created.json()["id"]
+
+    response = client.post(
+        "/api/v1/compliance/reports",
+        headers=headers,
+        json={"product_id": product_id, "sections": ["product_identity", "environmental_metrics", "materials"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["readiness_score"] == 100
+    assert payload["report_json"]["schema"] == "compliance-report.v1"
+    assert "Compliance Facade Panel" in payload["markdown"]
+    assert all(check["status"] == "ready" for check in payload["checks"])
+
+
 def test_certificate_extraction_captures_structured_fields(client: TestClient) -> None:
     auth = register(client, "tenant-certificate", "admin@certificate.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}
