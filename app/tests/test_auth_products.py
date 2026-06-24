@@ -13,6 +13,7 @@ from app.main import app
 from app.core.config import Settings
 from app.core.security import hash_password
 from app.models.enums import UserRole
+from app.models.lca import EmissionFactor
 from app.models.user import User
 from app.services.ai_service import LocalAIProvider, build_ai_provider
 from app.services.email_service import EmailService
@@ -805,6 +806,108 @@ def test_compliance_report_builder_scores_evidence_readiness(client: TestClient)
     assert payload["report_json"]["schema"] == "compliance-report.v1"
     assert "Compliance Facade Panel" in payload["markdown"]
     assert all(check["status"] == "ready" for check in payload["checks"])
+
+
+def test_lca_calculation_engine_persists_stage_totals_and_history(client: TestClient) -> None:
+    auth = register(client, "tenant-lca", "admin@lca.example")
+    other = register(client, "tenant-lca-other", "admin@lca-other.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    other_headers = {"Authorization": f"Bearer {other['access_token']}"}
+
+    db = client.app.state.TestingSessionLocal()
+    try:
+        db.add(
+            EmissionFactor(
+                id="test-cement-factor",
+                name="Test blended cement factor",
+                category="Cement",
+                lifecycle_stage="A1-A3",
+                unit="t",
+                factor_kg_co2e=620,
+                geography="India",
+                source="Test benchmark",
+                version="test",
+                notes="Unit test factor",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "LCA Cement",
+            "category": "Cement",
+            "description": "Cement product for LCA calculations.",
+            "manufacturer": "LCA Materials",
+            "country": "India",
+            "production_method": "Blended cement grinding",
+        },
+    )
+    product_id = created.json()["id"]
+
+    factors = client.get("/api/v1/lca/emission-factors?search=blended", headers=headers)
+    assert factors.status_code == 200
+    assert any(item["id"] == "test-cement-factor" for item in factors.json())
+
+    calculated = client.post(
+        f"/api/v1/lca/products/{product_id}/calculations",
+        headers=headers,
+        json={
+            "declared_unit": "1 t cement",
+            "boundary": "A1-A4 screening",
+            "inputs": [
+                {
+                    "stage": "A1-A3",
+                    "activity_name": "Blended cement production",
+                    "quantity": 1,
+                    "unit": "t",
+                    "emission_factor_id": "test-cement-factor",
+                    "data_quality": "hybrid",
+                },
+                {
+                    "stage": "A4",
+                    "activity_name": "Outbound road freight",
+                    "quantity": 120,
+                    "unit": "t-km",
+                    "emission_factor_kg_co2e": 0.095,
+                    "data_quality": "estimated",
+                },
+            ],
+        },
+    )
+
+    assert calculated.status_code == 201, calculated.text
+    payload = calculated.json()
+    assert payload["total_kg_co2e"] == 631.4
+    assert payload["stage_totals_json"]["A1-A3"] == 620
+    assert payload["stage_totals_json"]["A4"] == 11.4
+    assert payload["confidence"] == "estimated"
+    assert "clinker" in payload["result_json"]["interpretation"].lower()
+
+    history = client.get(f"/api/v1/lca/products/{product_id}/calculations", headers=headers)
+    assert history.status_code == 200
+    assert history.json()["total"] == 1
+
+    blocked = client.post(
+        f"/api/v1/lca/products/{product_id}/calculations",
+        headers=other_headers,
+        json={
+            "declared_unit": "1 t cement",
+            "inputs": [
+                {
+                    "stage": "A1-A3",
+                    "activity_name": "Blocked calculation",
+                    "quantity": 1,
+                    "unit": "t",
+                    "emission_factor_id": "test-cement-factor",
+                }
+            ],
+        },
+    )
+    assert blocked.status_code == 404
 
 
 def test_certificate_extraction_captures_structured_fields(client: TestClient) -> None:
