@@ -1,12 +1,19 @@
 import json
+from datetime import datetime
 from typing import Protocol
 
+from fastapi import HTTPException
 import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.db.session import SessionLocal
+from app.models.ai_job import AIJob
 from app.models.product import EnvironmentalRecord, Product
-from app.schemas.ai import AdvisorResponse, Recommendation, ReportResponse
+from app.models.user import User
+from app.repositories.ai_jobs import AIJobRepository
+from app.repositories.products import ProductRepository
+from app.schemas.ai import AIJobRead, AdvisorResponse, Recommendation, ReportResponse
 from app.services.product_service import ProductService
 
 
@@ -151,7 +158,12 @@ class SustainabilityAdvisor:
         self.provider = provider or build_ai_provider()
 
     def analyze(self, user, product_id: str) -> AdvisorResponse:
-        product = ProductService(self.db).get_product(user, product_id)
+        if not user.organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
+        return self.analyze_for_org(user.organization_id, product_id)
+
+    def analyze_for_org(self, organization_id: str, product_id: str) -> AdvisorResponse:
+        product = self._get_product_for_org(organization_id, product_id)
         latest = product.environmental_records[0] if product.environmental_records else None
         recommendations = self.provider.recommendations(
             product, latest, _local_recommendations(latest)
@@ -163,9 +175,85 @@ class SustainabilityAdvisor:
         )
 
     def report(self, user, product_id: str) -> ReportResponse:
-        product = ProductService(self.db).get_product(user, product_id)
+        if not user.organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
+        return self.report_for_org(user.organization_id, product_id)
+
+    def report_for_org(self, organization_id: str, product_id: str) -> ReportResponse:
+        product = self._get_product_for_org(organization_id, product_id)
         latest = product.environmental_records[0] if product.environmental_records else None
         return self.provider.report(product, latest, _local_report(product, latest))
+
+    def _get_product_for_org(self, organization_id: str, product_id: str) -> Product:
+        product = ProductRepository(self.db).get_for_org(organization_id, product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return product
+
+
+class AIJobService:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+        self.jobs = AIJobRepository(db)
+
+    def enqueue(self, user: User, product_id: str, job_type: str) -> AIJobRead:
+        if not user.organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
+        if job_type not in {"advisor", "report"}:
+            raise HTTPException(status_code=400, detail="Unsupported AI job type")
+        ProductService(self.db).get_product(user, product_id)
+        job = AIJob(
+            organization_id=user.organization_id,
+            user_id=user.id,
+            product_id=product_id,
+            job_type=job_type,
+            status="pending",
+        )
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+        return AIJobRead.model_validate(job)
+
+    def get_job(self, user: User, job_id: str) -> AIJobRead:
+        if not user.organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
+        job = self.jobs.get_for_org(user.organization_id, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="AI job not found")
+        return AIJobRead.model_validate(job)
+
+    @staticmethod
+    def process(job_id: str) -> None:
+        db = SessionLocal()
+        try:
+            AIJobService.process_with_session(db, job_id)
+        finally:
+            db.close()
+
+    @staticmethod
+    def process_with_session(db: Session, job_id: str) -> None:
+        job = db.get(AIJob, job_id)
+        if not job or job.status not in {"pending", "failed"}:
+            return
+        job.status = "running"
+        job.started_at = datetime.utcnow()
+        db.commit()
+        try:
+            advisor = SustainabilityAdvisor(db)
+            if job.job_type == "advisor":
+                result = advisor.analyze_for_org(job.organization_id, job.product_id).model_dump()
+            elif job.job_type == "report":
+                result = advisor.report_for_org(job.organization_id, job.product_id).model_dump()
+            else:
+                raise ValueError(f"Unsupported AI job type: {job.job_type}")
+            job.result_json = result
+            job.status = "succeeded"
+            job.error_message = None
+        except Exception as exc:  # noqa: BLE001 - job state should capture provider/runtime failures.
+            job.status = "failed"
+            job.error_message = str(exc)
+        job.completed_at = datetime.utcnow()
+        db.commit()
 
 
 def _local_recommendations(latest: EnvironmentalRecord | None) -> list[Recommendation]:

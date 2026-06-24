@@ -492,6 +492,41 @@ def test_ai_advisor_and_report_use_configured_provider_contract(client: TestClie
     assert "AI Concrete" in report.json()["summary"]
 
 
+def test_ai_jobs_create_and_store_results(client: TestClient) -> None:
+    auth = register(client, "tenant-ai-jobs", "admin@ai-jobs.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Async AI Concrete",
+            "category": "Concrete",
+            "description": "Concrete with async AI workflows.",
+            "manufacturer": "AI Materials",
+            "country": "Germany",
+            "production_method": "Batch plant",
+            "environmental_record": {
+                "co2_kg": 500,
+                "water_liters": 1200,
+                "energy_kwh": 650,
+                "transportation_kg_co2": 110,
+                "recyclability_score": 60,
+                "sustainability_score": 70,
+            },
+        },
+    )
+    product_id = created.json()["id"]
+
+    queued = client.post(f"/api/v1/ai/products/{product_id}/report/jobs", headers=headers)
+
+    assert queued.status_code == 202, queued.text
+    assert queued.json()["job_type"] == "report"
+    job = client.get(f"/api/v1/ai/jobs/{queued.json()['id']}", headers=headers)
+    assert job.status_code == 200
+    assert job.json()["status"] == "succeeded"
+    assert "Async AI Concrete" in job.json()["result_json"]["summary"]
+
+
 def test_csv_import_filtering_and_delete(client: TestClient) -> None:
     auth = register(client, "tenant-import", "admin@import.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}
