@@ -46,6 +46,12 @@ Optional environment variables:
 ```bash
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
+FRONTEND_BASE_URL=https://climate-product-web.vercel.app
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=
+EMAIL_FROM="Material Passport OS <onboarding@yourdomain.com>"
+REDIS_URL=rediss://default:PASSWORD@HOST:PORT
+ANALYTICS_CACHE_TTL_SECONDS=120
 CLOUDFLARE_R2_ACCOUNT_ID=
 CLOUDFLARE_R2_ACCESS_KEY_ID=
 CLOUDFLARE_R2_SECRET_ACCESS_KEY=
@@ -85,6 +91,19 @@ CLOUDFLARE_R2_PUBLIC_BASE_URL=
 ```
 
 `CLOUDFLARE_R2_ENDPOINT_URL` is optional.
+
+## Email And Cache
+
+Password reset and organization invite emails use Resend when `EMAIL_PROVIDER=resend` and `RESEND_API_KEY` are set. Without those values, delivery is skipped safely for local development.
+
+Sustainability analytics are cached in Redis-compatible storage, such as Aiven for Valkey, using `REDIS_URL`. Product mutations invalidate the organization analytics cache.
+
+## System Checks
+
+- `/health`: API liveness.
+- `/ready`: database and cache readiness report.
+
+Responses also include `x-request-id` and `x-process-time-ms` headers.
 
 ## Validation
 
