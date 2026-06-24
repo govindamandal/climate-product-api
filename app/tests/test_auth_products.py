@@ -600,6 +600,50 @@ def test_sustainability_analytics_summary(client: TestClient) -> None:
     assert payload["score_distribution"][-1]["count"] == 1
 
 
+def test_product_benchmarks_include_category_context(client: TestClient) -> None:
+    auth = register(client, "tenant-benchmarks", "admin@benchmarks.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    for name, category, co2, water, energy, score in [
+        ("Standard Concrete", "Concrete", 600, 1500, 700, 62),
+        ("Low Carbon Concrete", "Concrete", 360, 1200, 420, 84),
+        ("Circular Brick", "Brick", 220, 650, 330, 81),
+    ]:
+        response = client.post(
+            "/api/v1/products",
+            headers=headers,
+            json={
+                "name": name,
+                "category": category,
+                "description": "Benchmark product",
+                "manufacturer": "Benchmark Materials",
+                "country": "Germany",
+                "production_method": "Measured production",
+                "environmental_record": {
+                    "co2_kg": co2,
+                    "water_liters": water,
+                    "energy_kwh": energy,
+                    "transportation_kg_co2": 40,
+                    "recyclability_score": 75,
+                    "sustainability_score": score,
+                },
+            },
+        )
+        assert response.status_code == 201
+
+    response = client.get("/api/v1/analytics/benchmarks", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["portfolio"]["measured_products"] == 3
+    assert payload["portfolio"]["category_count"] == 2
+    concrete = next(item for item in payload["category_averages"] if item["category"] == "Concrete")
+    assert concrete["average_co2"] == 480
+    low_carbon = next(item for item in payload["items"] if item["name"] == "Low Carbon Concrete")
+    assert low_carbon["co2_vs_category_pct"] == -25
+    assert low_carbon["score_vs_category_points"] == 11
+    assert low_carbon["co2_percentile"] > 0
+
+
 def test_certificate_extraction_captures_structured_fields(client: TestClient) -> None:
     auth = register(client, "tenant-certificate", "admin@certificate.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}
