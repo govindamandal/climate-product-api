@@ -19,6 +19,7 @@ from app.repositories.organizations import OrganizationRepository
 from app.repositories.users import PasswordResetTokenRepository, RefreshTokenRepository, UserRepository
 from app.schemas.auth import AuthTokens, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest, ResetPasswordRequest
 from app.services.audit_service import AuditService
+from app.services.email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +95,7 @@ class AuthService:
         if not user or not user.is_active:
             return ForgotPasswordResponse(message=message)
 
-        raw_token, token_hash = create_refresh_token()
-        expires_at = datetime.utcnow() + timedelta(minutes=self.settings.password_reset_token_expire_minutes)
-        self.db.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
+        reset_url = self.create_password_reset_url(user)
         AuditService(self.db).record(
             action=AuditAction.UPDATE,
             entity_type="password_reset",
@@ -105,8 +104,12 @@ class AuthService:
             entity_id=user.id,
         )
         self.db.commit()
-        reset_url = f"{self.settings.frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
         logger.info("password_reset_requested", extra={"user_id": user.id, "reset_url": reset_url})
+        EmailService().send_password_reset(
+            to_email=user.email,
+            full_name=user.full_name,
+            reset_url=reset_url,
+        )
         if self.settings.environment in {"local", "development", "test"}:
             return ForgotPasswordResponse(message=message, reset_url=reset_url)
         return ForgotPasswordResponse(message=message)
@@ -133,6 +136,12 @@ class AuthService:
         )
         self.db.commit()
         return {"message": "Password has been reset. Please sign in with your new password."}
+
+    def create_password_reset_url(self, user: User) -> str:
+        raw_token, token_hash = create_refresh_token()
+        expires_at = datetime.utcnow() + timedelta(minutes=self.settings.password_reset_token_expire_minutes)
+        self.db.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
+        return f"{self.settings.frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
 
     def _resolve_reset_user(self, payload: ForgotPasswordRequest) -> User | None:
         user_repo = UserRepository(self.db)

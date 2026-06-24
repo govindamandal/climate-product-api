@@ -15,6 +15,7 @@ from app.core.security import hash_password
 from app.models.enums import UserRole
 from app.models.user import User
 from app.services.ai_service import LocalAIProvider, build_ai_provider
+from app.services.email_service import EmailService
 
 
 @pytest.fixture()
@@ -187,6 +188,26 @@ def test_password_reset_updates_password_and_revokes_refresh_tokens(client: Test
     assert reused_token.status_code == 400
 
 
+def test_password_reset_sends_email(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    register(client, "tenant-reset-email", "admin@reset-email.example")
+    sent: list[dict] = []
+
+    def fake_send_password_reset(self, **kwargs) -> bool:
+        sent.append(kwargs)
+        return True
+
+    monkeypatch.setattr(EmailService, "send_password_reset", fake_send_password_reset)
+
+    requested = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"organization_slug": "tenant-reset-email", "email": "admin@reset-email.example"},
+    )
+
+    assert requested.status_code == 202
+    assert sent[0]["to_email"] == "admin@reset-email.example"
+    assert "/reset-password?token=" in sent[0]["reset_url"]
+
+
 def test_password_reset_requires_tenant_context_for_duplicate_email(client: TestClient) -> None:
     register(client, "tenant-reset-alpha", "shared@example.com")
     register(client, "tenant-reset-beta", "shared@example.com")
@@ -228,9 +249,18 @@ def test_tenant_isolation(client: TestClient) -> None:
     assert beta_list.json()["total"] == 0
 
 
-def test_organization_team_management_and_audit_logs(client: TestClient) -> None:
+def test_organization_team_management_and_audit_logs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     auth = register(client, "tenant-team", "admin@team.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    sent_invites: list[dict] = []
+
+    def fake_send_invite(self, **kwargs) -> bool:
+        sent_invites.append(kwargs)
+        return True
+
+    monkeypatch.setattr(EmailService, "send_invite", fake_send_invite)
 
     invited = client.post(
         "/api/v1/organizations/invites",
@@ -242,6 +272,9 @@ def test_organization_team_management_and_audit_logs(client: TestClient) -> None
         },
     )
     assert invited.status_code == 200, invited.text
+    assert sent_invites[0]["to_email"] == "manager@team.example"
+    assert sent_invites[0]["organization_name"] == "Tenant Team"
+    assert "/reset-password?token=" in sent_invites[0]["invite_url"]
     members = invited.json()["members"]
     member = next(item for item in members if item["email"] == "manager@team.example")
     assert member["role"] == "org_user"

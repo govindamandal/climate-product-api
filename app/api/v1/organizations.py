@@ -17,6 +17,8 @@ from app.schemas.organization import (
     TeamRead,
 )
 from app.services.audit_service import AuditService
+from app.services.auth_service import AuthService
+from app.services.email_service import EmailService
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -76,6 +78,8 @@ def invite_user(payload: InviteUserRequest, user: CurrentUser, db: DbSession) ->
     )
     db.add(invited)
     db.flush()
+    org = OrganizationRepository(db).get(user.organization_id)
+    invite_url = AuthService(db).create_password_reset_url(invited)
     AuditService(db).record(
         action=AuditAction.CREATE,
         entity_type="user_invite",
@@ -84,7 +88,13 @@ def invite_user(payload: InviteUserRequest, user: CurrentUser, db: DbSession) ->
         entity_id=invited.id,
     )
     db.commit()
-    org = OrganizationRepository(db).get(user.organization_id)
+    EmailService().send_invite(
+        to_email=invited.email,
+        full_name=invited.full_name,
+        organization_name=org.name,
+        role=invited.role.value,
+        invite_url=invite_url,
+    )
     return TeamRead(organization=org, members=repo.members(user.organization_id))
 
 
