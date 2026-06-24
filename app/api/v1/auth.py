@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.auth import (
     AuthTokens,
+    AcceptInviteRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -39,6 +40,11 @@ def forgot_password(payload: ForgotPasswordRequest, db: DbSession) -> ForgotPass
 @router.post("/reset-password")
 def reset_password(payload: ResetPasswordRequest, db: DbSession) -> dict:
     return AuthService(db).reset_password(payload)
+
+
+@router.post("/accept-invite", response_model=AuthTokens)
+def accept_invite(payload: AcceptInviteRequest, db: DbSession) -> AuthTokens:
+    return AuthService(db).accept_invite(payload)
 
 
 @router.get("/me", response_model=UserRead)

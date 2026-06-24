@@ -46,6 +46,7 @@ class PasswordResetToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(40), default="password_reset", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

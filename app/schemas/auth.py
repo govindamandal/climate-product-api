@@ -37,6 +37,11 @@ class ResetPasswordRequest(BaseModel):
     password: str = Field(min_length=10, max_length=128)
 
 
+class AcceptInviteRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=255)
+    password: str = Field(min_length=10, max_length=128)
+
+
 class UserRead(BaseModel):
     id: str
     organization_id: str | None

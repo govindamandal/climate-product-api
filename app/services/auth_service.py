@@ -17,7 +17,15 @@ from app.models.organization import Organization
 from app.models.user import PasswordResetToken, RefreshToken, User
 from app.repositories.organizations import OrganizationRepository
 from app.repositories.users import PasswordResetTokenRepository, RefreshTokenRepository, UserRepository
-from app.schemas.auth import AuthTokens, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest, ResetPasswordRequest
+from app.schemas.auth import (
+    AcceptInviteRequest,
+    AuthTokens,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+)
 from app.services.audit_service import AuditService
 from app.services.email_service import EmailService
 
@@ -95,7 +103,7 @@ class AuthService:
         if not user or not user.is_active:
             return ForgotPasswordResponse(message=message)
 
-        reset_url = self.create_password_reset_url(user)
+        reset_url = self.create_password_reset_url(user, purpose="password_reset")
         AuditService(self.db).record(
             action=AuditAction.UPDATE,
             entity_type="password_reset",
@@ -115,15 +123,8 @@ class AuthService:
         return ForgotPasswordResponse(message=message)
 
     def reset_password(self, payload: ResetPasswordRequest) -> dict:
-        reset_token = PasswordResetTokenRepository(self.db).by_hash(hash_token(payload.token))
-        if not reset_token or reset_token.used_at or reset_token.expires_at < datetime.utcnow():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
-        user = reset_token.user
-        if not user or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
-
+        reset_token, user = self._consume_password_token(payload.token, purpose="password_reset")
         user.hashed_password = hash_password(payload.password)
-        reset_token.used_at = datetime.utcnow()
         refresh_tokens = RefreshTokenRepository(self.db).active_for_user(user.id)
         for token in refresh_tokens:
             token.revoked_at = datetime.utcnow()
@@ -137,11 +138,48 @@ class AuthService:
         self.db.commit()
         return {"message": "Password has been reset. Please sign in with your new password."}
 
-    def create_password_reset_url(self, user: User) -> str:
+    def accept_invite(self, payload: AcceptInviteRequest) -> AuthTokens:
+        _, user = self._consume_password_token(payload.token, purpose="invite_accept")
+        user.hashed_password = hash_password(payload.password)
+        user.is_active = True
+        AuditService(self.db).record(
+            action=AuditAction.UPDATE,
+            entity_type="invite_acceptance",
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_id=user.id,
+        )
+        self.db.commit()
+        return self._issue_tokens(user)
+
+    def create_password_reset_url(self, user: User, *, purpose: str = "password_reset") -> str:
         raw_token, token_hash = create_refresh_token()
         expires_at = datetime.utcnow() + timedelta(minutes=self.settings.password_reset_token_expire_minutes)
-        self.db.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
-        return f"{self.settings.frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
+        self.db.add(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=token_hash,
+                purpose=purpose,
+                expires_at=expires_at,
+            )
+        )
+        path = "accept-invite" if purpose == "invite_accept" else "reset-password"
+        return f"{self.settings.frontend_base_url.rstrip('/')}/{path}?token={raw_token}"
+
+    def _consume_password_token(self, raw_token: str, *, purpose: str) -> tuple[PasswordResetToken, User]:
+        token = PasswordResetTokenRepository(self.db).by_hash(hash_token(raw_token))
+        if (
+            not token
+            or token.purpose != purpose
+            or token.used_at
+            or token.expires_at < datetime.utcnow()
+        ):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
+        user = token.user
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
+        token.used_at = datetime.utcnow()
+        return token, user
 
     def _resolve_reset_user(self, payload: ForgotPasswordRequest) -> User | None:
         user_repo = UserRepository(self.db)

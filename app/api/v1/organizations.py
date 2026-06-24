@@ -79,7 +79,7 @@ def invite_user(payload: InviteUserRequest, user: CurrentUser, db: DbSession) ->
     db.add(invited)
     db.flush()
     org = OrganizationRepository(db).get(user.organization_id)
-    invite_url = AuthService(db).create_password_reset_url(invited)
+    invite_url = AuthService(db).create_password_reset_url(invited, purpose="invite_accept")
     AuditService(db).record(
         action=AuditAction.CREATE,
         entity_type="user_invite",

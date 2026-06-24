@@ -195,6 +195,12 @@ def test_password_reset_updates_password_and_revokes_refresh_tokens(client: Test
     )
     assert reused_token.status_code == 400
 
+    invite_with_reset_token = client.post(
+        "/api/v1/auth/accept-invite",
+        json={"token": token, "password": "InviteClimatePass123!"},
+    )
+    assert invite_with_reset_token.status_code == 400
+
 
 def test_password_reset_sends_email(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     register(client, "tenant-reset-email", "admin@reset-email.example")
@@ -282,7 +288,7 @@ def test_organization_team_management_and_audit_logs(
     assert invited.status_code == 200, invited.text
     assert sent_invites[0]["to_email"] == "manager@team.example"
     assert sent_invites[0]["organization_name"] == "Tenant Team"
-    assert "/reset-password?token=" in sent_invites[0]["invite_url"]
+    assert "/accept-invite?token=" in sent_invites[0]["invite_url"]
     members = invited.json()["members"]
     member = next(item for item in members if item["email"] == "manager@team.example")
     assert member["role"] == "org_user"
@@ -316,6 +322,47 @@ def test_organization_team_management_and_audit_logs(
     assert removed.status_code == 204
     team = client.get("/api/v1/organizations/team", headers=headers)
     assert all(item["email"] != "manager@team.example" for item in team.json()["members"])
+
+
+def test_invited_user_accepts_invite_and_receives_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    auth = register(client, "tenant-invite-accept", "admin@invite-accept.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    sent_invites: list[dict] = []
+
+    def fake_send_invite(self, **kwargs) -> bool:
+        sent_invites.append(kwargs)
+        return True
+
+    monkeypatch.setattr(EmailService, "send_invite", fake_send_invite)
+    invited = client.post(
+        "/api/v1/organizations/invites",
+        headers=headers,
+        json={
+            "email": "new.member@invite-accept.example",
+            "full_name": "New Member",
+            "role": "org_user",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+    invite_token = parse_qs(urlparse(sent_invites[0]["invite_url"]).query)["token"][0]
+
+    accepted = client.post(
+        "/api/v1/auth/accept-invite",
+        json={"token": invite_token, "password": "AcceptedClimatePass123!"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    session = accepted.json()
+    assert session["user"]["email"] == "new.member@invite-accept.example"
+    assert session["user"]["role"] == "org_user"
+    assert session["access_token"]
+
+    reused = client.post(
+        "/api/v1/auth/accept-invite",
+        json={"token": invite_token, "password": "AcceptedClimatePass123!"},
+    )
+    assert reused.status_code == 400
 
 
 def test_organization_team_management_is_tenant_scoped(client: TestClient) -> None:
