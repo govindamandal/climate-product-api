@@ -38,6 +38,10 @@ class AuditLogRead(BaseModel):
     entity_id: str | None
     metadata_json: dict
     created_at: datetime
+    actor_email: str | None = None
+    actor_full_name: str | None = None
+    organization_name: str | None = None
+    description: str | None = None
 
     model_config = {"from_attributes": True}
 

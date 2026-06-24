@@ -310,6 +310,16 @@ def test_organization_team_management_and_audit_logs(
         "user_invite",
         "team_member",
     }
+    assert any(item["actor_email"] == "admin@team.example" for item in audit_logs.json()["items"])
+    assert any(item["description"] for item in audit_logs.json()["items"])
+
+    filtered_logs = client.get(
+        "/api/v1/organizations/audit-logs?entity_type=team_member&search=admin@team.example",
+        headers=headers,
+    )
+    assert filtered_logs.status_code == 200
+    assert filtered_logs.json()["total"] == 1
+    assert filtered_logs.json()["items"][0]["entity_type"] == "team_member"
 
     self_update = client.patch(
         f"/api/v1/organizations/team/{auth['user']['id']}",
@@ -440,6 +450,12 @@ def test_super_admin_platform_management(client: TestClient) -> None:
     audit_logs = client.get("/api/v1/platform/audit-logs", headers=headers)
     assert audit_logs.status_code == 200
     assert audit_logs.json()["total"] >= 2
+    assert any(item["organization_name"] == "Platform Concrete Co" for item in audit_logs.json()["items"])
+
+    filtered_logs = client.get("/api/v1/platform/audit-logs?action=update&search=Platform", headers=headers)
+    assert filtered_logs.status_code == 200
+    assert filtered_logs.json()["total"] == 1
+    assert filtered_logs.json()["items"][0]["entity_type"] == "subscription"
 
 
 def test_platform_routes_require_super_admin(client: TestClient) -> None:

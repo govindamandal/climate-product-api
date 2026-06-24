@@ -131,14 +131,20 @@ def list_platform_users(db: DbSession) -> PlatformUserList:
 
 
 @router.get("/audit-logs", response_model=PlatformAuditLogList)
-def list_platform_audit_logs(db: DbSession, limit: int = 50) -> PlatformAuditLogList:
-    bounded_limit = max(1, min(limit, 200))
-    stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(bounded_limit)
-    total_stmt = select(func.count(AuditLog.id))
-    return PlatformAuditLogList(
-        items=list(db.scalars(stmt)),
-        total=int(db.scalar(total_stmt) or 0),
+def list_platform_audit_logs(
+    db: DbSession,
+    limit: int = 50,
+    action: str | None = None,
+    entity_type: str | None = None,
+    search: str | None = None,
+) -> PlatformAuditLogList:
+    items, total = AuditService(db).list_logs(
+        limit=limit,
+        action=action,
+        entity_type=entity_type,
+        search=search,
     )
+    return PlatformAuditLogList(items=items, total=total)
 
 
 def _organization_read(db: DbSession, organization: Organization) -> PlatformOrganizationRead:

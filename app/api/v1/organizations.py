@@ -1,9 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession, require_roles
 from app.core.security import hash_password
-from app.models.audit import AuditLog
 from app.models.enums import AuditAction, UserRole
 from app.models.user import User
 from app.repositories.organizations import OrganizationRepository
@@ -42,18 +40,24 @@ def team(user: CurrentUser, db: DbSession) -> TeamRead:
 
 
 @router.get("/audit-logs", response_model=AuditLogList)
-def audit_logs(user: CurrentUser, db: DbSession, limit: int = 25) -> AuditLogList:
+def audit_logs(
+    user: CurrentUser,
+    db: DbSession,
+    limit: int = 25,
+    action: str | None = None,
+    entity_type: str | None = None,
+    search: str | None = None,
+) -> AuditLogList:
     if not user.organization_id:
         raise HTTPException(status_code=404, detail="No organization")
-    bounded_limit = max(1, min(limit, 100))
-    stmt = (
-        select(AuditLog)
-        .where(AuditLog.organization_id == user.organization_id)
-        .order_by(AuditLog.created_at.desc())
-        .limit(bounded_limit)
+    items, total = AuditService(db).list_logs(
+        organization_id=user.organization_id,
+        limit=limit,
+        action=action,
+        entity_type=entity_type,
+        search=search,
     )
-    total_stmt = select(func.count(AuditLog.id)).where(AuditLog.organization_id == user.organization_id)
-    return AuditLogList(items=list(db.scalars(stmt)), total=int(db.scalar(total_stmt) or 0))
+    return AuditLogList(items=items, total=total)
 
 
 @router.post(
