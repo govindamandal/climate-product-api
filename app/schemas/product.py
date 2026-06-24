@@ -91,3 +91,18 @@ class PassportRead(BaseModel):
     latest_environmental_record: EnvironmentalRecordRead | None
     sustainability_score: int
     passport_json: dict
+
+
+class PassportShareRead(BaseModel):
+    id: str
+    product_id: str
+    token: str
+    share_url: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PublicPassportRead(PassportRead):
+    share: PassportShareRead

@@ -1,7 +1,16 @@
+from secrets import token_urlsafe
+
+from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.models.enums import AuditAction
+from app.models.passport_share import PassportShare
 from app.models.user import User
-from app.schemas.product import PassportRead
+from app.repositories.products import ProductRepository
+from app.schemas.product import PassportRead, PassportShareRead, PublicPassportRead
+from app.services.audit_service import AuditService
 from app.services.product_service import ProductService
 
 
@@ -11,6 +20,57 @@ class PassportService:
 
     def generate(self, user: User, product_id: str) -> PassportRead:
         product = ProductService(self.db).get_product(user, product_id)
+        return self._passport_for_product(product)
+
+    def create_share(self, user: User, product_id: str) -> PassportShareRead:
+        product = ProductService(self.db).get_product(user, product_id)
+        share = self.db.scalar(
+            select(PassportShare).where(
+                PassportShare.organization_id == product.organization_id,
+                PassportShare.product_id == product.id,
+                PassportShare.is_active.is_(True),
+            )
+        )
+        if not share:
+            share = PassportShare(
+                organization_id=product.organization_id,
+                product_id=product.id,
+                created_by_user_id=user.id,
+                token=token_urlsafe(32),
+            )
+            self.db.add(share)
+            self.db.flush()
+            AuditService(self.db).record(
+                action=AuditAction.EXPORT,
+                entity_type="passport_share",
+                organization_id=product.organization_id,
+                actor_user_id=user.id,
+                entity_id=product.id,
+                metadata={"product_name": product.name},
+            )
+            self.db.commit()
+            self.db.refresh(share)
+        return self._share_read(share)
+
+    def public_passport(self, token: str) -> PublicPassportRead:
+        share = self.db.scalar(
+            select(PassportShare).where(PassportShare.token == token, PassportShare.is_active.is_(True))
+        )
+        if not share:
+            raise HTTPException(status_code=404, detail="Public passport not found")
+        product = ProductRepository(self.db).get_for_org(share.organization_id, share.product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Public passport not found")
+        passport = self._passport_for_product(product)
+        return PublicPassportRead(
+            product=passport.product,
+            latest_environmental_record=passport.latest_environmental_record,
+            sustainability_score=passport.sustainability_score,
+            passport_json=passport.passport_json,
+            share=self._share_read(share),
+        )
+
+    def _passport_for_product(self, product) -> PassportRead:
         latest = product.environmental_records[0] if product.environmental_records else None
         score = latest.sustainability_score if latest else 0
         passport = {
@@ -41,4 +101,14 @@ class PassportService:
             latest_environmental_record=latest,
             sustainability_score=score,
             passport_json=passport,
+        )
+
+    def _share_read(self, share: PassportShare) -> PassportShareRead:
+        return PassportShareRead(
+            id=share.id,
+            product_id=share.product_id,
+            token=share.token,
+            share_url=f"{get_settings().frontend_base_url.rstrip('/')}/share/passports/{share.token}",
+            is_active=share.is_active,
+            created_at=share.created_at,
         )

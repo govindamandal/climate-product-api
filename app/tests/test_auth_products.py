@@ -146,6 +146,49 @@ def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
     assert image_upload.json()["detail"] == "Cloudflare R2 storage is not configured"
 
 
+def test_dpp_public_sharing_is_tokenized_and_tenant_scoped(client: TestClient) -> None:
+    auth = register(client, "tenant-dpp-share", "admin@dpp-share.example")
+    other = register(client, "tenant-dpp-other", "admin@dpp-other.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    other_headers = {"Authorization": f"Bearer {other['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Public DPP Panel",
+            "category": "Facade",
+            "description": "Shareable product passport.",
+            "manufacturer": "DPP Materials",
+            "country": "Germany",
+            "production_method": "Precast",
+            "material_composition": {"cement": 30, "aggregate": 60},
+            "certifications": [{"name": "EPD EN 15804"}],
+            "environmental_record": {
+                "co2_kg": 300,
+                "water_liters": 700,
+                "energy_kwh": 390,
+                "transportation_kg_co2": 28,
+                "recyclability_score": 80,
+                "sustainability_score": 86,
+            },
+        },
+    )
+    product_id = created.json()["id"]
+
+    share = client.post(f"/api/v1/passports/{product_id}/shares", headers=headers)
+
+    assert share.status_code == 201, share.text
+    assert "/share/passports/" in share.json()["share_url"]
+    blocked = client.post(f"/api/v1/passports/{product_id}/shares", headers=other_headers)
+    assert blocked.status_code == 404
+
+    public = client.get(f"/api/v1/passports/public/{share.json()['token']}")
+    assert public.status_code == 200
+    assert public.json()["product"]["name"] == "Public DPP Panel"
+    assert public.json()["sustainability_score"] == 86
+    assert public.json()["share"]["token"] == share.json()["token"]
+
+
 def test_password_reset_updates_password_and_revokes_refresh_tokens(client: TestClient) -> None:
     auth = register(client, "tenant-reset", "admin@reset.example")
 
