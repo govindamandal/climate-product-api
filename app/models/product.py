@@ -20,6 +20,18 @@ class Product(Base):
     manufacturer: Mapped[str] = mapped_column(String(160), nullable=False)
     country: Mapped[str] = mapped_column(String(80), nullable=False)
     production_method: Mapped[str] = mapped_column(String(180), nullable=False)
+    product_code: Mapped[str] = mapped_column(String(80), default="")
+    declared_unit: Mapped[str] = mapped_column(String(80), default="1 unit")
+    functional_unit: Mapped[str] = mapped_column(String(180), default="")
+    lifecycle_scope: Mapped[str] = mapped_column(String(80), default="cradle-to-gate")
+    reference_service_life_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    manufacturing_site: Mapped[str] = mapped_column(String(180), default="")
+    plant_code: Mapped[str] = mapped_column(String(80), default="")
+    product_standard: Mapped[str] = mapped_column(String(160), default="")
+    pcr: Mapped[str] = mapped_column(String(180), default="")
+    geography: Mapped[str] = mapped_column(String(120), default="")
+    data_quality: Mapped[str] = mapped_column(String(40), default="estimated")
+    technical_properties: Mapped[dict] = mapped_column(JSON, default=dict)
     image_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
     image_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     material_composition: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -36,6 +48,39 @@ class Product(Base):
         cascade="all, delete-orphan",
         order_by="EnvironmentalRecord.recorded_at.desc()",
     )
+    material_components = relationship(
+        "ProductMaterialComponent",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductMaterialComponent.sort_order.asc()",
+    )
+
+
+class ProductMaterialComponent(Base):
+    __tablename__ = "product_material_components"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    material_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), default="")
+    percentage: Mapped[float] = mapped_column(Float, nullable=False)
+    recycled_content_pct: Mapped[float] = mapped_column(Float, default=0)
+    bio_based_content_pct: Mapped[float] = mapped_column(Float, default=0)
+    supplier: Mapped[str] = mapped_column(String(160), default="")
+    origin_country: Mapped[str] = mapped_column(String(80), default="")
+    evidence_reference: Mapped[str] = mapped_column(String(240), default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    product = relationship("Product", back_populates="material_components")
 
 
 class EnvironmentalRecord(Base):

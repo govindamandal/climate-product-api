@@ -3,7 +3,7 @@ from app.db.migrations import run_migrations
 from app.db.session import SessionLocal
 from app.models.enums import UserRole
 from app.models.organization import Organization
-from app.models.product import EnvironmentalRecord, Product
+from app.models.product import EnvironmentalRecord, Product, ProductMaterialComponent
 from app.models.user import User
 
 PRODUCTS = [
@@ -59,11 +59,34 @@ def seed() -> None:
                 manufacturer="Emidat Demo Manufacturing",
                 country="Germany",
                 production_method="Verified batch production with supplier traceability",
+                product_code=category.upper()[:3] + "-DEMO",
+                declared_unit="1 t" if category in {"Cement", "Steel"} else "1 m3",
+                functional_unit=f"One declared unit of {category.lower()} for building construction.",
+                lifecycle_scope="cradle-to-gate",
+                manufacturing_site="Demo Manufacturing Plant 1",
+                plant_code="PLANT-DE-01",
+                product_standard="EN 15804 aligned internal dataset",
+                pcr="Construction products PCR",
+                geography="Germany",
+                data_quality="verified",
+                technical_properties={"compressive_strength_mpa": 35} if category == "Concrete" else {},
                 material_composition={"primary": category, "recycled_content_pct": max(score - 55, 5)},
                 certifications=[{"name": "EPD EN 15804", "status": "verified"}],
             )
             db.add(product)
             db.flush()
+            db.add(
+                ProductMaterialComponent(
+                    organization_id=org.id,
+                    product_id=product.id,
+                    material_name=category,
+                    category=category,
+                    percentage=100,
+                    recycled_content_pct=max(score - 55, 5),
+                    origin_country="Germany",
+                    evidence_reference="Seeded supplier declaration",
+                )
+            )
             db.add(
                 EnvironmentalRecord(
                     organization_id=org.id,

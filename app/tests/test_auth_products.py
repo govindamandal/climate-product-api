@@ -123,8 +123,37 @@ def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
             "manufacturer": "Alpha Materials",
             "country": "Germany",
             "production_method": "Batch plant",
+            "product_code": "LCC-C35",
+            "declared_unit": "1 m3",
+            "functional_unit": "One cubic metre of structural concrete.",
+            "lifecycle_scope": "cradle-to-gate",
+            "manufacturing_site": "Berlin Plant",
+            "plant_code": "BER-01",
+            "product_standard": "EN 206",
+            "pcr": "Construction products PCR",
+            "geography": "Germany",
+            "data_quality": "measured",
+            "technical_properties": {"compressive_strength_mpa": 35},
             "image_url": "https://assets.example.com/products/concrete.jpg",
             "material_composition": {"cement": 18, "aggregate": 72, "additives": 10},
+            "material_components": [
+                {
+                    "material_name": "CEM II cement",
+                    "category": "Cement",
+                    "percentage": 18,
+                    "recycled_content_pct": 0,
+                    "supplier": "Alpha Cement Works",
+                    "origin_country": "Germany",
+                    "evidence_reference": "Supplier declaration 2026",
+                },
+                {
+                    "material_name": "Recycled aggregate",
+                    "category": "Aggregate",
+                    "percentage": 72,
+                    "recycled_content_pct": 40,
+                    "origin_country": "Germany",
+                },
+            ],
             "certifications": [{"name": "EPD EN 15804"}],
             "environmental_record": {
                 "co2_kg": 410,
@@ -143,6 +172,14 @@ def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
     assert listed.json()["total"] == 1
     assert listed.json()["items"][0]["image_url"] == "https://assets.example.com/products/concrete.jpg"
     assert listed.json()["items"][0]["environmental_records"][0]["co2_kg"] == 410
+    assert listed.json()["items"][0]["declared_unit"] == "1 m3"
+    assert listed.json()["items"][0]["technical_properties"]["compressive_strength_mpa"] == 35
+    assert listed.json()["items"][0]["material_components"][0]["material_name"] == "CEM II cement"
+
+    detail = client.get(f"/api/v1/products/{listed.json()['items'][0]['id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["product_standard"] == "EN 206"
+    assert len(detail.json()["material_components"]) == 2
 
     image_upload = client.post(
         f"/api/v1/products/{listed.json()['items'][0]['id']}/image",

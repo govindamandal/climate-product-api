@@ -36,7 +36,10 @@ class ProductRepository(Repository[Product]):
             stmt = stmt.where(Product.category == category)
             count_stmt = count_stmt.where(Product.category == category)
         stmt = (
-            stmt.options(selectinload(Product.environmental_records))
+            stmt.options(
+                selectinload(Product.environmental_records),
+                selectinload(Product.material_components),
+            )
             .order_by(Product.updated_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -55,7 +58,10 @@ class ProductRepository(Repository[Product]):
     def get_for_org(self, organization_id: str, product_id: str) -> Product | None:
         return self.db.scalar(
             select(Product)
-            .options(selectinload(Product.environmental_records))
+            .options(
+                selectinload(Product.environmental_records),
+                selectinload(Product.material_components),
+            )
             .where(Product.organization_id == organization_id, Product.id == product_id)
         )
 

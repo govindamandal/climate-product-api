@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.enums import AuditAction
-from app.models.product import EnvironmentalRecord, Product
+from app.models.product import EnvironmentalRecord, Product, ProductMaterialComponent
 from app.models.user import User
 from app.repositories.products import ProductRepository
 from app.schemas.product import (
@@ -62,12 +62,25 @@ class ProductService:
             manufacturer=payload.manufacturer,
             country=payload.country,
             production_method=payload.production_method,
+            product_code=payload.product_code,
+            declared_unit=payload.declared_unit,
+            functional_unit=payload.functional_unit,
+            lifecycle_scope=payload.lifecycle_scope,
+            reference_service_life_years=payload.reference_service_life_years,
+            manufacturing_site=payload.manufacturing_site,
+            plant_code=payload.plant_code,
+            product_standard=payload.product_standard,
+            pcr=payload.pcr,
+            geography=payload.geography,
+            data_quality=payload.data_quality,
+            technical_properties=payload.technical_properties,
             image_url=payload.image_url,
             material_composition=payload.material_composition,
             certifications=payload.certifications,
         )
         self.db.add(product)
         self.db.flush()
+        self._replace_material_components(user, product, payload.material_components)
         if payload.environmental_record:
             self._create_record(user, product.id, payload.environmental_record)
         AuditService(self.db).record(
@@ -91,8 +104,12 @@ class ProductService:
 
     def update_product(self, user: User, product_id: str, payload: ProductUpdate) -> Product:
         product = self.get_product(user, product_id)
-        for field, value in payload.model_dump(exclude_unset=True).items():
+        update_data = payload.model_dump(exclude_unset=True)
+        material_components = update_data.pop("material_components", None)
+        for field, value in update_data.items():
             setattr(product, field, value)
+        if material_components is not None:
+            self._replace_material_components(user, product, payload.material_components or [])
         AuditService(self.db).record(
             action=AuditAction.UPDATE,
             entity_type="product",
@@ -216,6 +233,21 @@ class ProductService:
         material_composition = {"primary": text("category")}
         if recycled_content is not None:
             material_composition["recycled_content_pct"] = recycled_content
+        material_components = []
+        primary_material = text("primary_material", text("category"))
+        primary_pct = number("primary_material_pct")
+        if primary_material:
+            material_components.append(
+                {
+                    "material_name": primary_material,
+                    "category": text("primary_material_category", text("category")),
+                    "percentage": primary_pct if primary_pct is not None else 100,
+                    "recycled_content_pct": recycled_content or 0,
+                    "supplier": text("primary_material_supplier"),
+                    "origin_country": text("primary_material_origin_country", text("country")),
+                    "evidence_reference": text("primary_material_evidence_reference"),
+                }
+            )
 
         certifications = []
         certification_name = text("certification_name")
@@ -229,8 +261,21 @@ class ProductService:
             manufacturer=text("manufacturer"),
             country=text("country"),
             production_method=text("production_method"),
+            product_code=text("product_code"),
+            declared_unit=text("declared_unit", "1 unit"),
+            functional_unit=text("functional_unit"),
+            lifecycle_scope=text("lifecycle_scope", "cradle-to-gate"),
+            reference_service_life_years=integer("reference_service_life_years"),
+            manufacturing_site=text("manufacturing_site"),
+            plant_code=text("plant_code"),
+            product_standard=text("product_standard"),
+            pcr=text("pcr"),
+            geography=text("geography", text("country")),
+            data_quality=text("data_quality", "estimated"),
+            technical_properties={},
             image_url=text("image_url") or None,
             material_composition=material_composition,
+            material_components=material_components,
             certifications=certifications,
             environmental_record=environmental_record,
         )
@@ -246,6 +291,34 @@ class ProductService:
         self.db.add(record)
         self.db.flush()
         return record
+
+    def _replace_material_components(
+        self,
+        user: User,
+        product: Product,
+        components: list,
+    ) -> None:
+        for component in list(product.material_components):
+            self.db.delete(component)
+        self.db.flush()
+        for index, component in enumerate(components):
+            data = component.model_dump() if hasattr(component, "model_dump") else dict(component)
+            self.db.add(
+                ProductMaterialComponent(
+                    organization_id=user.organization_id or product.organization_id,
+                    product_id=product.id,
+                    sort_order=data.get("sort_order") or index,
+                    material_name=data["material_name"],
+                    category=data.get("category") or "",
+                    percentage=data["percentage"],
+                    recycled_content_pct=data.get("recycled_content_pct") or 0,
+                    bio_based_content_pct=data.get("bio_based_content_pct") or 0,
+                    supplier=data.get("supplier") or "",
+                    origin_country=data.get("origin_country") or "",
+                    evidence_reference=data.get("evidence_reference") or "",
+                )
+            )
+        self.db.flush()
 
     def _invalidate_analytics(self, user: User) -> None:
         if user.organization_id:
