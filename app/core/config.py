@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -59,11 +60,12 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_database_url(self) -> str:
-        if self.database_url.startswith("postgresql://"):
-            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-        if self.database_url.startswith("postgres://"):
-            return self.database_url.replace("postgres://", "postgresql+psycopg://", 1)
-        return self.database_url
+        database_url = self._normalize_database_url(self.database_url)
+        if database_url.startswith("postgresql://"):
+            return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        if database_url.startswith("postgres://"):
+            return database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        return database_url
 
     def _default_cors_origins(self) -> list[str]:
         return [
@@ -79,6 +81,18 @@ class Settings(BaseSettings):
             if clean_origin and clean_origin not in normalized:
                 normalized.append(clean_origin)
         return normalized
+
+    def _normalize_database_url(self, database_url: str) -> str:
+        clean_url = database_url.strip().strip("'\"")
+        if clean_url.startswith("DATABASE_URL="):
+            clean_url = clean_url.removeprefix("DATABASE_URL=").strip().strip("'\"")
+        parts = urlsplit(clean_url)
+        if not parts.query:
+            return clean_url
+        query = urlencode(
+            [(key.strip(), value.strip()) for key, value in parse_qsl(parts.query, keep_blank_values=True)]
+        )
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 @lru_cache

@@ -101,6 +101,15 @@ def test_database_url_normalizes_postgres_driver() -> None:
     assert settings.sqlalchemy_database_url.startswith("postgresql+psycopg://")
 
 
+def test_database_url_strips_query_value_whitespace() -> None:
+    settings = Settings(
+        database_url="postgres://user:pass@example.com/db?sslmode=require&channel_binding=require\n"
+    )
+
+    assert settings.sqlalchemy_database_url.endswith("sslmode=require&channel_binding=require")
+    assert "require%0A" not in settings.sqlalchemy_database_url
+
+
 def test_health_includes_trace_headers(client: TestClient) -> None:
     response = client.get("/health", headers={"x-request-id": "test-request-id"})
 
