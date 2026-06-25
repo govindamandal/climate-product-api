@@ -972,6 +972,95 @@ def test_compliance_report_builder_scores_evidence_readiness(client: TestClient)
     assert all(check["status"] == "ready" for check in payload["checks"])
 
 
+def test_india_compliance_report_scores_local_evidence_and_verification(client: TestClient) -> None:
+    auth = register(client, "tenant-india-compliance", "admin@india-compliance.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "India Low Carbon Cement",
+            "category": "Cement",
+            "description": "Blended cement for Indian infrastructure buyers.",
+            "manufacturer": "India Compliance Materials",
+            "country": "India",
+            "production_method": "Blended cement grinding",
+            "declared_unit": "1 t",
+            "manufacturing_site": "Nagpur Grinding Unit",
+            "plant_code": "NGP-01",
+            "product_standard": "IS 1489 aligned internal dataset",
+            "pcr": "Construction products PCR",
+            "geography": "India",
+            "material_composition": {"clinker": 55, "fly_ash": 30, "gypsum": 5},
+            "material_components": [
+                {
+                    "material_name": "Clinker",
+                    "category": "Cementitious",
+                    "percentage": 55,
+                    "recycled_content_pct": 0,
+                    "bio_based_content_pct": 0,
+                    "supplier": "Nagpur Kiln",
+                    "origin_country": "India",
+                    "evidence_reference": "Supplier declaration 2026",
+                    "sort_order": 0,
+                },
+                {
+                    "material_name": "Fly ash",
+                    "category": "SCM",
+                    "percentage": 30,
+                    "recycled_content_pct": 100,
+                    "bio_based_content_pct": 0,
+                    "supplier": "Thermal power supplier",
+                    "origin_country": "India",
+                    "evidence_reference": "Dispatch note FA-2026",
+                    "sort_order": 1,
+                },
+            ],
+            "certifications": [{"name": "Internal EPD readiness pack", "status": "verified"}],
+            "environmental_record": {
+                "co2_kg": 620,
+                "water_liters": 900,
+                "energy_kwh": 980,
+                "transportation_kg_co2": 72,
+                "recyclability_score": 68,
+                "sustainability_score": 74,
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    product_id = created.json()["id"]
+
+    submitted = client.post(
+        "/api/v1/verifications",
+        headers=headers,
+        json={
+            "product_id": product_id,
+            "evidence_summary": "Environmental metrics, material suppliers, and certificate pack reviewed.",
+        },
+    )
+    assert submitted.status_code == 201, submitted.text
+    reviewed = client.patch(
+        f"/api/v1/verifications/{submitted.json()['id']}/review",
+        headers=headers,
+        json={"status": "approved", "reviewer_notes": "Ready for Indian buyer evidence pack."},
+    )
+    assert reviewed.status_code == 200, reviewed.text
+
+    response = client.post(
+        "/api/v1/compliance/india/reports",
+        headers=headers,
+        json={"product_id": product_id, "sections": []},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["readiness_score"] == 100
+    assert payload["report_json"]["schema"] == "india-compliance-readiness.v1"
+    assert payload["report_json"]["jurisdiction"] == "India"
+    assert "India Compliance Readiness Report" in payload["markdown"]
+    assert all(check["status"] == "ready" for check in payload["checks"])
+
+
 def test_lca_calculation_engine_persists_stage_totals_and_history(client: TestClient) -> None:
     auth = register(client, "tenant-lca", "admin@lca.example")
     other = register(client, "tenant-lca-other", "admin@lca-other.example")

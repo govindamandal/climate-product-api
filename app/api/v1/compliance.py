@@ -12,3 +12,10 @@ def build_compliance_report(
     payload: ComplianceReportRequest, user: CurrentUser, db: DbSession
 ) -> ComplianceReportResponse:
     return ComplianceReportService(db).build(user, payload)
+
+
+@router.post("/india/reports", response_model=ComplianceReportResponse)
+def build_india_compliance_report(
+    payload: ComplianceReportRequest, user: CurrentUser, db: DbSession
+) -> ComplianceReportResponse:
+    return ComplianceReportService(db).build_india_readiness(user, payload)
