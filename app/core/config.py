@@ -57,6 +57,14 @@ class Settings(BaseSettings):
                 origins = [origin.strip() for origin in value.split(",") if origin.strip()]
         return self._normalize_origins([*origins, *self._default_cors_origins()])
 
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        if self.database_url.startswith("postgres://"):
+            return self.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        return self.database_url
+
     def _default_cors_origins(self) -> list[str]:
         return [
             "http://localhost:5173",

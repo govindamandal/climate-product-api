@@ -95,6 +95,12 @@ def test_auth_preflight_allows_web_origin(client: TestClient) -> None:
     assert "POST" in response.headers["access-control-allow-methods"]
 
 
+def test_database_url_normalizes_postgres_driver() -> None:
+    settings = Settings(database_url="postgres://user:pass@example.com/db")
+
+    assert settings.sqlalchemy_database_url.startswith("postgresql+psycopg://")
+
+
 def test_health_includes_trace_headers(client: TestClient) -> None:
     response = client.get("/health", headers={"x-request-id": "test-request-id"})
 
