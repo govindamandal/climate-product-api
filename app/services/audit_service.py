@@ -120,6 +120,8 @@ def describe_audit_log(log: AuditLog) -> str:
         return f"Updated subscription status to {status}"
     if log.entity_type == "product_import":
         return f"Imported {metadata.get('created', 0)} product(s)"
+    if log.entity_type == "product_verification":
+        return f"{action.title()} product verification as {metadata.get('status', 'submitted')}"
     if log.entity_type == "password_reset":
         return "Requested password reset instructions"
     if log.entity_type == "invite_acceptance":

@@ -564,6 +564,118 @@ def test_org_user_permissions_allow_contribution_but_block_admin_actions(client:
         assert response.status_code == 403, response.text
 
 
+def test_product_verification_workflow_is_reviewed_by_org_admin(client: TestClient) -> None:
+    auth = register(client, "tenant-verification", "admin@verification.example")
+    admin_headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=admin_headers,
+        json={
+            "name": "Verified Facade Panel",
+            "category": "Facade",
+            "description": "Panel ready for evidence review.",
+            "manufacturer": "Verification Materials",
+            "country": "Germany",
+            "production_method": "Precast",
+        },
+    )
+    assert created.status_code == 201, created.text
+    product_id = created.json()["id"]
+
+    invited = client.post(
+        "/api/v1/organizations/invites",
+        headers=admin_headers,
+        json={
+            "email": "submitter@verification.example",
+            "full_name": "Verification Submitter",
+            "role": "org_user",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "tenant-verification",
+            "email": "submitter@verification.example",
+            "password": "ChangeMeNow!2026",
+        },
+    )
+    assert login.status_code == 200, login.text
+    user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    submitted = client.post(
+        "/api/v1/verifications",
+        headers=user_headers,
+        json={
+            "product_id": product_id,
+            "verification_type": "internal_review",
+            "scope": "product_dpp",
+            "evidence_summary": "DPP metadata, certificate, and latest environmental record attached.",
+            "requester_notes": "Please review before sharing with buyers.",
+        },
+    )
+    assert submitted.status_code == 201, submitted.text
+    verification_id = submitted.json()["id"]
+    assert submitted.json()["status"] == "submitted"
+    assert submitted.json()["product_name"] == "Verified Facade Panel"
+
+    duplicate = client.post(
+        "/api/v1/verifications",
+        headers=user_headers,
+        json={"product_id": product_id},
+    )
+    assert duplicate.status_code == 409
+
+    user_review = client.patch(
+        f"/api/v1/verifications/{verification_id}/review",
+        headers=user_headers,
+        json={"status": "approved", "reviewer_notes": "Looks good."},
+    )
+    assert user_review.status_code == 403
+
+    approved = client.patch(
+        f"/api/v1/verifications/{verification_id}/review",
+        headers=admin_headers,
+        json={"status": "approved", "reviewer_notes": "Evidence is sufficient for buyer DPP use."},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["reviewed_by_email"] == "admin@verification.example"
+
+    listed = client.get("/api/v1/verifications?status=approved", headers=admin_headers)
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["id"] == verification_id
+
+    audit_logs = client.get("/api/v1/organizations/audit-logs?entity_type=product_verification", headers=admin_headers)
+    assert audit_logs.status_code == 200
+    assert audit_logs.json()["total"] >= 2
+
+
+def test_product_verification_requests_are_tenant_scoped(client: TestClient) -> None:
+    alpha = register(client, "tenant-verification-alpha", "admin@verification-alpha.example")
+    beta = register(client, "tenant-verification-beta", "admin@verification-beta.example")
+    alpha_headers = {"Authorization": f"Bearer {alpha['access_token']}"}
+    beta_headers = {"Authorization": f"Bearer {beta['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=alpha_headers,
+        json={
+            "name": "Tenant Scoped Panel",
+            "category": "Facade",
+            "description": "Tenant scoped verification product.",
+            "manufacturer": "Alpha Materials",
+            "country": "Germany",
+            "production_method": "Precast",
+        },
+    )
+    product_id = created.json()["id"]
+
+    blocked = client.post("/api/v1/verifications", headers=beta_headers, json={"product_id": product_id})
+
+    assert blocked.status_code == 404
+
+
 def test_super_admin_platform_management(client: TestClient) -> None:
     super_auth = create_super_admin(client)
     headers = {"Authorization": f"Bearer {super_auth['access_token']}"}
