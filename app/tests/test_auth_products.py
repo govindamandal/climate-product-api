@@ -1015,9 +1015,14 @@ def test_ai_advisor_and_report_use_configured_provider_contract(client: TestClie
 
     assert advisor.status_code == 200
     assert advisor.json()["provider"] == "local"
+    assert advisor.json()["safety"]["status"] == "validated"
+    assert advisor.json()["safety"]["execution_mode"] == "deterministic"
     assert advisor.json()["recommendations"]
     assert report.status_code == 200
+    assert report.json()["provider"] == "local"
+    assert report.json()["safety"]["disclaimers"]
     assert "AI Concrete" in report.json()["summary"]
+    assert "AI Safety Notes" in report.json()["markdown"]
 
 
 def test_ai_jobs_create_and_store_results(client: TestClient) -> None:
@@ -1052,7 +1057,41 @@ def test_ai_jobs_create_and_store_results(client: TestClient) -> None:
     job = client.get(f"/api/v1/ai/jobs/{queued.json()['id']}", headers=headers)
     assert job.status_code == 200
     assert job.json()["status"] == "succeeded"
+    assert job.json()["provider"] == "local"
+    assert job.json()["safety_status"] == "validated"
+    assert job.json()["safety_metadata_json"]["policy_version"] == "ai-safety.v1"
     assert "Async AI Concrete" in job.json()["result_json"]["summary"]
+
+
+def test_ai_processing_respects_organization_privacy_setting(client: TestClient) -> None:
+    auth = register(client, "tenant-ai-policy", "admin@ai-policy.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Policy Concrete",
+            "category": "Concrete",
+            "description": "Concrete used to test AI privacy controls.",
+            "manufacturer": "Policy Materials",
+            "country": "Germany",
+            "production_method": "Batch plant",
+        },
+    )
+    product_id = created.json()["id"]
+    disabled = client.patch(
+        "/api/v1/organizations/privacy-settings",
+        headers=headers,
+        json={"allow_ai_processing": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+
+    advisor = client.post(f"/api/v1/ai/products/{product_id}/advisor", headers=headers)
+    queued = client.post(f"/api/v1/ai/products/{product_id}/advisor/jobs", headers=headers)
+
+    assert advisor.status_code == 403
+    assert advisor.json()["detail"] == "AI processing is disabled for this organization"
+    assert queued.status_code == 403
 
 
 def test_csv_import_filtering_and_delete(client: TestClient) -> None:
