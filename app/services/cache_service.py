@@ -52,6 +52,14 @@ class CacheService:
             logger.warning("cache_ping_failed", extra={"error": str(exc)})
             return False
 
+    def health(self) -> tuple[bool, str | None]:
+        try:
+            ok = bool(self.client.ping())
+            return ok, None if ok else "Cache ping returned false"
+        except RedisError as exc:
+            logger.warning("cache_health_failed", extra={"error": str(exc)})
+            return False, str(exc)
+
 
 def analytics_cache_key(organization_id: str) -> str:
     return f"analytics:summary:{organization_id}"

@@ -1,7 +1,6 @@
 from time import perf_counter
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from uuid import uuid4
 
@@ -14,7 +13,7 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.observability.logging import configure_logging
-from app.services.cache_service import CacheService
+from app.services.operations_service import OperationsService
 
 configure_logging()
 settings = get_settings()
@@ -55,16 +54,8 @@ def create_app() -> FastAPI:
 
     @app.get("/ready", tags=["System"])
     def readiness(db: DbSession) -> dict:
-        checks: dict[str, dict[str, str]] = {}
-        try:
-            db.execute(text("SELECT 1"))
-            checks["database"] = {"status": "ok"}
-        except Exception as exc:  # noqa: BLE001 - readiness should report dependency errors.
-            checks["database"] = {"status": "error", "detail": str(exc)}
-
-        checks["cache"] = {"status": "ok" if CacheService().ping() else "degraded"}
-        overall_status = "ok" if all(check["status"] == "ok" for check in checks.values()) else "degraded"
-        return {"status": overall_status, "service": settings.app_name, "checks": checks}
+        status = OperationsService(db).status()
+        return status.model_dump(mode="json")
 
     if settings.enable_otel:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

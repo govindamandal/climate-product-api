@@ -118,6 +118,20 @@ def test_health_includes_trace_headers(client: TestClient) -> None:
     assert float(response.headers["x-process-time-ms"]) >= 0
 
 
+def test_readiness_reports_dependency_checks(client: TestClient) -> None:
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["service"] == "Climate Product Platform API"
+    assert payload["status"] in {"ok", "degraded"}
+    assert payload["uptime_seconds"] >= 0
+    checks = {check["name"]: check for check in payload["checks"]}
+    assert checks["database"]["status"] == "ok"
+    assert checks["database"]["latency_ms"] is not None
+    assert checks["cache"]["status"] in {"ok", "degraded"}
+
+
 def test_security_headers_are_applied(client: TestClient) -> None:
     response = client.get("/health")
 
@@ -946,6 +960,22 @@ def test_platform_routes_require_super_admin(client: TestClient) -> None:
 
     response = client.get("/api/v1/platform/analytics", headers=headers)
     assert response.status_code == 403
+
+    operations = client.get("/api/v1/operations/status", headers=headers)
+    assert operations.status_code == 403
+
+
+def test_super_admin_can_view_operations_status(client: TestClient) -> None:
+    super_auth = create_super_admin(client)
+    headers = {"Authorization": f"Bearer {super_auth['access_token']}"}
+
+    response = client.get("/api/v1/operations/status", headers=headers)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["environment"] == "local"
+    assert payload["status"] in {"ok", "degraded"}
+    assert {check["name"] for check in payload["checks"]} == {"database", "cache"}
 
 
 def test_ai_provider_defaults_to_local_without_remote_credentials() -> None:

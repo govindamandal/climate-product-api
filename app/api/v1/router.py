@@ -8,6 +8,7 @@ from app.api.v1 import (
     certificates,
     compliance,
     lca,
+    operations,
     organizations,
     passports,
     platform,
@@ -27,4 +28,5 @@ api_router.include_router(certificates.router)
 api_router.include_router(compliance.router)
 api_router.include_router(lca.router)
 api_router.include_router(verifications.router)
+api_router.include_router(operations.router)
 api_router.include_router(platform.router)
