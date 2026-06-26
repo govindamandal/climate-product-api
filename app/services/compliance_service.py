@@ -1,11 +1,22 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.verification import ProductVerification
+from app.models.enums import AuditAction
+from app.models.report_pack import ProfessionalReportPack
 from app.models.user import User
-from app.schemas.compliance import ComplianceCheck, ComplianceReportRequest, ComplianceReportResponse
+from app.models.verification import ProductVerification
+from app.schemas.compliance import (
+    ComplianceCheck,
+    ComplianceReportRequest,
+    ComplianceReportResponse,
+    ProfessionalReportPackCreate,
+    ProfessionalReportPackList,
+    ProfessionalReportPackRead,
+)
+from app.services.audit_service import AuditService
 from app.services.product_service import ProductService
 
 DEFAULT_SECTIONS = [
@@ -225,6 +236,75 @@ class ComplianceReportService:
             markdown=markdown,
             report_json=report_json,
         )
+
+    def list_report_packs(
+        self, user: User, *, product_id: str | None = None, report_type: str | None = None
+    ) -> ProfessionalReportPackList:
+        if not user.organization_id:
+            return ProfessionalReportPackList(items=[], total=0)
+        filters = [ProfessionalReportPack.organization_id == user.organization_id]
+        if product_id:
+            filters.append(ProfessionalReportPack.product_id == product_id)
+        if report_type:
+            filters.append(ProfessionalReportPack.report_type == report_type)
+        stmt = (
+            select(ProfessionalReportPack)
+            .where(*filters)
+            .order_by(ProfessionalReportPack.created_at.desc())
+        )
+        count_stmt = select(func.count(ProfessionalReportPack.id)).where(*filters)
+        return ProfessionalReportPackList(
+            items=[ProfessionalReportPackRead.model_validate(item) for item in self.db.scalars(stmt)],
+            total=int(self.db.scalar(count_stmt) or 0),
+        )
+
+    def create_report_pack(
+        self, user: User, payload: ProfessionalReportPackCreate
+    ) -> ProfessionalReportPackRead:
+        if not user.organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
+        report = (
+            self.build_india_readiness(user, payload)
+            if payload.report_type == "india"
+            else self.build(user, payload)
+        )
+        title = payload.title or (
+            f"{report.product_name} India Buyer Evidence Pack"
+            if payload.report_type == "india"
+            else f"{report.product_name} Compliance Readiness Pack"
+        )
+        pack = ProfessionalReportPack(
+            organization_id=user.organization_id,
+            product_id=report.product_id,
+            created_by_user_id=user.id,
+            report_type=payload.report_type,
+            title=title,
+            product_name=report.product_name,
+            readiness_score=report.readiness_score,
+            summary=report.summary,
+            sections_json=report.sections,
+            checks_json=[check.model_dump() for check in report.checks],
+            report_json=report.report_json,
+            markdown=report.markdown,
+            status="final",
+        )
+        self.db.add(pack)
+        self.db.flush()
+        AuditService(self.db).record(
+            action=AuditAction.CREATE,
+            entity_type="professional_report_pack",
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_id=pack.id,
+            metadata={
+                "product_id": pack.product_id,
+                "report_type": pack.report_type,
+                "readiness_score": pack.readiness_score,
+            },
+        )
+        self.db.commit()
+        self.db.refresh(pack)
+        return ProfessionalReportPackRead.model_validate(pack)
 
 
 def status_points(status: str) -> int:

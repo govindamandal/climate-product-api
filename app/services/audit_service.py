@@ -132,6 +132,9 @@ def describe_audit_log(log: AuditLog) -> str:
         request_type = str(metadata.get("request_type", "data")).replace("_", " ")
         status = metadata.get("status", "open")
         return f"{action.title()} {request_type} request as {status}"
+    if log.entity_type == "professional_report_pack":
+        report_type = str(metadata.get("report_type", "professional")).replace("_", " ")
+        return f"Created {report_type} report pack"
     if log.entity_type == "password_reset":
         return "Requested password reset instructions"
     if log.entity_type == "invite_acceptance":

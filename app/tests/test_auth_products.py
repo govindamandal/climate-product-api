@@ -1341,6 +1341,76 @@ def test_india_compliance_report_scores_local_evidence_and_verification(client: 
     assert all(check["status"] == "ready" for check in payload["checks"])
 
 
+def test_professional_report_packs_are_persisted_and_tenant_scoped(client: TestClient) -> None:
+    auth = register(client, "tenant-report-pack", "admin@report-pack.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Tender Ready Concrete",
+            "category": "Concrete",
+            "description": "Concrete mix with professional reporting evidence.",
+            "manufacturer": "Report Pack Materials",
+            "country": "India",
+            "production_method": "Ready-mix batching",
+            "material_composition": {"cement": 24, "aggregate": 68, "admixture": 2},
+            "certifications": [{"name": "EPD draft", "status": "internal"}],
+            "environmental_record": {
+                "co2_kg": 285,
+                "water_liters": 640,
+                "energy_kwh": 310,
+                "transportation_kg_co2": 42,
+                "recyclability_score": 76,
+                "sustainability_score": 80,
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    product_id = created.json()["id"]
+
+    created_pack = client.post(
+        "/api/v1/compliance/report-packs",
+        headers=headers,
+        json={
+            "product_id": product_id,
+            "sections": ["product_identity", "environmental_metrics", "materials"],
+            "report_type": "standard",
+            "title": "Tender evidence pack",
+        },
+    )
+
+    assert created_pack.status_code == 201, created_pack.text
+    pack = created_pack.json()
+    assert pack["title"] == "Tender evidence pack"
+    assert pack["product_id"] == product_id
+    assert pack["readiness_score"] == 100
+    assert pack["report_json"]["schema"] == "compliance-report.v1"
+    assert "Tender Ready Concrete" in pack["markdown"]
+
+    listed = client.get(
+        f"/api/v1/compliance/report-packs?product_id={product_id}",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["id"] == pack["id"]
+
+    audit_logs = client.get(
+        "/api/v1/organizations/audit-logs?entity_type=professional_report_pack",
+        headers=headers,
+    )
+    assert audit_logs.status_code == 200, audit_logs.text
+    assert audit_logs.json()["total"] == 1
+    assert audit_logs.json()["items"][0]["description"] == "Created standard report pack"
+
+    other_auth = register(client, "tenant-report-pack-other", "admin@report-pack-other.example")
+    other_headers = {"Authorization": f"Bearer {other_auth['access_token']}"}
+    isolated = client.get("/api/v1/compliance/report-packs", headers=other_headers)
+    assert isolated.status_code == 200, isolated.text
+    assert isolated.json()["total"] == 0
+
+
 def test_lca_calculation_engine_persists_stage_totals_and_history(client: TestClient) -> None:
     auth = register(client, "tenant-lca", "admin@lca.example")
     other = register(client, "tenant-lca-other", "admin@lca-other.example")

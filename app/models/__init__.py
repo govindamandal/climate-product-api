@@ -6,6 +6,7 @@ from app.models.lca import EmissionFactor, LcaCalculation
 from app.models.organization import DataGovernanceRequest, Organization, OrganizationPrivacySettings
 from app.models.passport_share import PassportShare
 from app.models.product import EnvironmentalRecord, Product, ProductMaterialComponent
+from app.models.report_pack import ProfessionalReportPack
 from app.models.user import PasswordResetToken, RefreshToken, User
 from app.models.verification import ProductVerification
 
@@ -24,6 +25,7 @@ __all__ = [
     "PassportShare",
     "Product",
     "ProductMaterialComponent",
+    "ProfessionalReportPack",
     "ProductVerification",
     "PasswordResetToken",
     "RefreshToken",
