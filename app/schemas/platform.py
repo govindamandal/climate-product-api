@@ -10,6 +10,10 @@ from app.schemas.organization import AuditLogRead, OrganizationRead
 class PlatformOrganizationRead(OrganizationRead):
     user_count: int
     product_count: int
+    billing_plan_key: str | None = None
+    billing_plan_name: str | None = None
+    billing_cycle: str | None = None
+    billing_status: str | None = None
 
 
 class PlatformOrganizationList(BaseModel):

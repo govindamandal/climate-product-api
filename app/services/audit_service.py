@@ -118,6 +118,10 @@ def describe_audit_log(log: AuditLog) -> str:
     if log.entity_type == "subscription":
         status = metadata.get("subscription_status", "updated")
         return f"Updated subscription status to {status}"
+    if log.entity_type == "billing_subscription":
+        plan = metadata.get("plan_key", "plan")
+        cycle = metadata.get("billing_cycle", "cycle")
+        return f"Updated billing subscription to {plan} ({cycle})"
     if log.entity_type == "product_import":
         return f"Imported {metadata.get('created', 0)} product(s)"
     if log.entity_type == "product_verification":

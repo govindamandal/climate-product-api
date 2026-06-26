@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from app.api.deps import CurrentUser, DbSession, require_roles
 from app.core.security import hash_password
 from app.models.audit import AuditLog
+from app.models.billing import BillingSubscription
 from app.models.enums import AuditAction, SubscriptionStatus, UserRole
 from app.models.organization import Organization
 from app.models.product import Product
@@ -23,6 +24,7 @@ from app.schemas.platform import (
     PlatformUserList,
 )
 from app.services.audit_service import AuditService
+from app.services.billing_service import PLAN_CATALOG
 
 router = APIRouter(
     prefix="/platform",
@@ -152,6 +154,10 @@ def _organization_read(db: DbSession, organization: Organization) -> PlatformOrg
     product_count = int(
         db.scalar(select(func.count(Product.id)).where(Product.organization_id == organization.id)) or 0
     )
+    billing = db.scalar(
+        select(BillingSubscription).where(BillingSubscription.organization_id == organization.id)
+    )
+    plan = PLAN_CATALOG.get(billing.plan_key) if billing else None
     return PlatformOrganizationRead(
         id=organization.id,
         name=organization.name,
@@ -161,4 +167,8 @@ def _organization_read(db: DbSession, organization: Organization) -> PlatformOrg
         created_at=organization.created_at,
         user_count=user_count,
         product_count=product_count,
+        billing_plan_key=billing.plan_key if billing else None,
+        billing_plan_name=plan.name if plan else None,
+        billing_cycle=billing.billing_cycle if billing else None,
+        billing_status=billing.status if billing else None,
     )

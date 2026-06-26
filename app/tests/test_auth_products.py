@@ -627,6 +627,67 @@ def test_privacy_controls_and_data_requests_are_tenant_scoped(client: TestClient
     assert audit_logs.json()["total"] >= 2
 
 
+def test_billing_summary_and_plan_changes_are_tenant_scoped(client: TestClient) -> None:
+    auth = register(client, "tenant-billing", "admin@billing.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+
+    plans = client.get("/api/v1/billing/plans", headers=headers)
+    assert plans.status_code == 200, plans.text
+    assert {plan["key"] for plan in plans.json()} >= {"starter", "growth", "enterprise"}
+
+    summary = client.get("/api/v1/billing/current", headers=headers)
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["subscription"]["plan_key"] == "starter"
+    assert summary.json()["usage"]["users"] == 1
+    assert summary.json()["usage"]["products"] == 0
+
+    upgraded = client.patch(
+        "/api/v1/billing/current",
+        headers=headers,
+        json={"plan_key": "growth", "billing_cycle": "annual"},
+    )
+    assert upgraded.status_code == 200, upgraded.text
+    assert upgraded.json()["subscription"]["plan_key"] == "growth"
+    assert upgraded.json()["subscription"]["billing_cycle"] == "annual"
+    assert upgraded.json()["subscription"]["status"] == "active"
+    assert upgraded.json()["usage"]["seats_included"] == 10
+
+    invited = client.post(
+        "/api/v1/organizations/invites",
+        headers=headers,
+        json={
+            "email": "member@billing.example",
+            "full_name": "Billing Member",
+            "role": "org_user",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "tenant-billing",
+            "email": "member@billing.example",
+            "password": "ChangeMeNow!2026",
+        },
+    )
+    user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    user_summary = client.get("/api/v1/billing/current", headers=user_headers)
+    assert user_summary.status_code == 200
+    blocked = client.patch(
+        "/api/v1/billing/current",
+        headers=user_headers,
+        json={"plan_key": "enterprise", "billing_cycle": "annual"},
+    )
+    assert blocked.status_code == 403
+
+    audit_logs = client.get(
+        "/api/v1/organizations/audit-logs?entity_type=billing_subscription",
+        headers=headers,
+    )
+    assert audit_logs.status_code == 200
+    assert audit_logs.json()["total"] == 1
+
+
 def test_org_user_permissions_allow_contribution_but_block_admin_actions(client: TestClient) -> None:
     auth = register(client, "tenant-rbac", "admin@rbac.example")
     admin_headers = {"Authorization": f"Bearer {auth['access_token']}"}
@@ -835,6 +896,27 @@ def test_super_admin_platform_management(client: TestClient) -> None:
     assert updated.status_code == 200
     assert updated.json()["subscription_status"] == "active"
 
+    tenant_login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "platform-concrete",
+            "email": "admin@platform-concrete.example",
+            "password": "ChangeMeNow!2026",
+        },
+    )
+    tenant_headers = {"Authorization": f"Bearer {tenant_login.json()['access_token']}"}
+    billing = client.patch(
+        "/api/v1/billing/current",
+        headers=tenant_headers,
+        json={"plan_key": "growth", "billing_cycle": "monthly"},
+    )
+    assert billing.status_code == 200, billing.text
+
+    organizations_after_billing = client.get("/api/v1/platform/organizations", headers=headers)
+    assert organizations_after_billing.status_code == 200
+    assert organizations_after_billing.json()["items"][0]["billing_plan_key"] == "growth"
+    assert organizations_after_billing.json()["items"][0]["billing_cycle"] == "monthly"
+
     analytics = client.get("/api/v1/platform/analytics", headers=headers)
     assert analytics.status_code == 200
     assert analytics.json()["organization_count"] == 1
@@ -849,7 +931,10 @@ def test_super_admin_platform_management(client: TestClient) -> None:
     assert audit_logs.json()["total"] >= 2
     assert any(item["organization_name"] == "Platform Concrete Co" for item in audit_logs.json()["items"])
 
-    filtered_logs = client.get("/api/v1/platform/audit-logs?action=update&search=Platform", headers=headers)
+    filtered_logs = client.get(
+        "/api/v1/platform/audit-logs?action=update&entity_type=subscription&search=Platform",
+        headers=headers,
+    )
     assert filtered_logs.status_code == 200
     assert filtered_logs.json()["total"] == 1
     assert filtered_logs.json()["items"][0]["entity_type"] == "subscription"
