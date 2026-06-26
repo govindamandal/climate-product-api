@@ -8,6 +8,11 @@ from uuid import uuid4
 from app.api.v1.router import api_router
 from app.api.deps import DbSession
 from app.core.config import get_settings
+from app.core.middleware import (
+    AuthRateLimitMiddleware,
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.observability.logging import configure_logging
 from app.services.cache_service import CacheService
 
@@ -31,6 +36,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Multi-tenant climate product management API with DPP and AI workflows.",
     )
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
+    app.add_middleware(AuthRateLimitMiddleware, requests_per_minute=settings.auth_rate_limit_per_minute)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,

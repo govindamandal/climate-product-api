@@ -118,6 +118,30 @@ def test_health_includes_trace_headers(client: TestClient) -> None:
     assert float(response.headers["x-process-time-ms"]) >= 0
 
 
+def test_security_headers_are_applied(client: TestClient) -> None:
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+    assert response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+
+
+def test_large_request_body_is_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/login",
+        content=b"{}",
+        headers={
+            "content-type": "application/json",
+            "content-length": str(11 * 1024 * 1024),
+        },
+    )
+
+    assert response.status_code == 413
+
+
 def test_registration_login_and_product_lifecycle(client: TestClient) -> None:
     auth = register(client, "tenant-alpha", "admin@alpha.example")
     headers = {"Authorization": f"Bearer {auth['access_token']}"}

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     password_reset_token_expire_minutes: int = 30
     frontend_base_url: str = "http://localhost:5173"
     cors_origins: str | list[str] = "http://localhost:5173,http://127.0.0.1:5173"
+    max_request_body_bytes: int = 10 * 1024 * 1024
+    auth_rate_limit_per_minute: int = 120
     email_provider: str = "local"
     resend_api_key: str | None = None
     email_from: str = "Material Passport OS <onboarding@example.com>"
