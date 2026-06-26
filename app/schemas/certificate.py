@@ -13,6 +13,14 @@ class CertificateExtractionRead(BaseModel):
     emission_value: float | None
     compliance_information: str | None
     extracted_json: dict
+    document_type: str | None
+    extraction_method: str | None
+    extraction_confidence: float | None
+    field_confidence_json: dict | None
+    evidence_json: dict | None
+    review_notes: str | None
+    reviewed_by_user_id: str | None
+    reviewed_at: datetime | None
     status: str
     created_at: datetime
 
@@ -29,4 +37,6 @@ class CertificateExtractionUpdate(BaseModel):
     expiry_date: date | None = None
     emission_value: float | None = Field(default=None, ge=0)
     compliance_information: str | None = None
+    document_type: str | None = Field(default=None, max_length=80)
+    review_notes: str | None = None
     status: str | None = Field(default=None, pattern="^(needs_review|approved|rejected)$")

@@ -1472,4 +1472,24 @@ def test_certificate_extraction_captures_structured_fields(client: TestClient) -
     assert payload["extracted_json"]["fields"]["declaration_number"] == "EPD-ABC-2026-001"
     assert payload["extracted_json"]["fields"]["declared_unit"] == "1 m2 facade panel"
     assert payload["extracted_json"]["overall_confidence"] > 0.7
+    assert payload["document_type"] == "epd"
+    assert payload["extraction_method"] == "pdf_text_field_extraction"
+    assert payload["extraction_confidence"] > 0.7
+    assert payload["field_confidence_json"]["certification_name"] == 0.9
+    assert "EPD-ABC-2026-001" in payload["evidence_json"]["declaration_number"]
     assert payload["status"] == "needs_review"
+
+    reviewed = client.patch(
+        f"/api/v1/certificates/{payload['id']}",
+        headers=headers,
+        json={
+            "status": "approved",
+            "review_notes": "Verified against uploaded EPD declaration.",
+            "document_type": "epd",
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["status"] == "approved"
+    assert reviewed.json()["review_notes"] == "Verified against uploaded EPD declaration."
+    assert reviewed.json()["reviewed_by_user_id"] == auth["user"]["id"]
+    assert reviewed.json()["reviewed_at"]

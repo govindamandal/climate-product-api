@@ -1,6 +1,6 @@
 import re
 from io import BytesIO
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import HTTPException, UploadFile
 from pypdf import PdfReader
@@ -10,6 +10,7 @@ from app.models.certificate import CertificateExtraction
 from app.models.enums import AuditAction
 from app.models.user import User
 from app.repositories.certificates import CertificateExtractionRepository
+from app.repositories.products import ProductRepository
 from app.schemas.certificate import (
     CertificateExtractionList,
     CertificateExtractionUpdate,
@@ -29,6 +30,8 @@ class CertificateExtractionService:
 
     async def extract(self, user: User, file: UploadFile, product_id: str | None) -> CertificateExtraction:
         organization_id = self._organization_id(user)
+        if product_id and not ProductRepository(self.db).get_for_org(organization_id, product_id):
+            raise HTTPException(status_code=404, detail="Product not found")
         content = await file.read()
         text = self._decode_content(file.filename, content)
         parsed = self._extract_fields(file.filename, text, len(content))
@@ -41,6 +44,11 @@ class CertificateExtractionService:
             emission_value=parsed["emission_value"],
             compliance_information=parsed["compliance_information"],
             extracted_json=parsed["extracted_json"],
+            document_type=parsed["document_type"],
+            extraction_method=parsed["extraction_method"],
+            extraction_confidence=parsed["extraction_confidence"],
+            field_confidence_json=parsed["field_confidence_json"],
+            evidence_json=parsed["evidence_json"],
             status="needs_review",
         )
         self.db.add(extraction)
@@ -50,7 +58,12 @@ class CertificateExtractionService:
             action=AuditAction.CREATE,
             entity_type="certificate_extraction",
             entity_id=extraction.id,
-            metadata={"file_name": file.filename, "requires_manual_review": True},
+            metadata={
+                "file_name": file.filename,
+                "document_type": extraction.document_type,
+                "extraction_confidence": extraction.extraction_confidence,
+                "requires_manual_review": True,
+            },
         )
         self.db.commit()
         self.db.refresh(extraction)
@@ -63,7 +76,11 @@ class CertificateExtractionService:
         extraction = self.certificates.get_for_org(organization_id, extraction_id)
         if not extraction:
             raise HTTPException(status_code=404, detail="Certificate extraction not found")
-        for field, value in payload.model_dump(exclude_unset=True).items():
+        changes = payload.model_dump(exclude_unset=True, mode="json")
+        if changes.get("status") in {"approved", "rejected"}:
+            extraction.reviewed_by_user_id = user.id
+            extraction.reviewed_at = datetime.utcnow()
+        for field, value in changes.items():
             setattr(extraction, field, value)
         AuditService(self.db).record(
             actor_user_id=user.id,
@@ -71,7 +88,7 @@ class CertificateExtractionService:
             action=AuditAction.UPDATE,
             entity_type="certificate_extraction",
             entity_id=extraction.id,
-            metadata={"status": extraction.status},
+            metadata={"status": extraction.status, "changed_fields": list(changes.keys())},
         )
         self.db.commit()
         self.db.refresh(extraction)
@@ -95,6 +112,7 @@ class CertificateExtractionService:
         searchable = f"{file_name}\n{text}"
         guessed_name = file_name.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
         certification = self._find_certification(searchable)
+        document_type = self._classify_document(searchable, certification["value"] if certification else "")
         issuer = self._find_labeled_text(searchable, ["issuer", "program operator", "verification body"])
         declaration_number = self._find_labeled_text(
             searchable, ["declaration number", "registration number", "certificate number", "epd number"]
@@ -116,17 +134,32 @@ class CertificateExtractionService:
             "declaration_number": 0.74 if declaration_number else 0.2,
             "declared_unit": 0.72 if declared_unit else 0.2,
         }
+        evidence = {
+            "certification_name": certification["evidence"] if certification else None,
+            "issuer": issuer["evidence"] if issuer else None,
+            "declaration_number": declaration_number["evidence"] if declaration_number else None,
+            "declared_unit": declared_unit["evidence"] if declared_unit else None,
+            "expiry_date": self._evidence_for(searchable, "valid") if expiry else None,
+            "emission_value": self._evidence_for(searchable, "co2") if emission is not None else None,
+        }
+        overall_confidence = round(sum(field_confidence.values()) / len(field_confidence), 2)
         return {
             "certification_name": certification_name,
             "expiry_date": expiry,
             "emission_value": emission,
             "compliance_information": compliance,
+            "document_type": document_type,
+            "extraction_method": "pdf_text_field_extraction",
+            "extraction_confidence": overall_confidence,
+            "field_confidence_json": field_confidence,
+            "evidence_json": evidence,
             "extracted_json": {
                 "bytes": byte_count,
                 "characters_extracted": len(text),
                 "workflow": "pdf_text_field_extraction",
+                "document_type": document_type,
                 "confidence": field_confidence,
-                "overall_confidence": round(sum(field_confidence.values()) / len(field_confidence), 2),
+                "overall_confidence": overall_confidence,
                 "fields": {
                     "certification_name": certification_name,
                     "issuer": issuer["value"] if issuer else None,
@@ -135,17 +168,20 @@ class CertificateExtractionService:
                     "expiry_date": expiry.isoformat() if expiry else None,
                     "emission_value": emission,
                 },
-                "evidence": {
-                    "certification_name": certification["evidence"] if certification else None,
-                    "issuer": issuer["evidence"] if issuer else None,
-                    "declaration_number": declaration_number["evidence"] if declaration_number else None,
-                    "declared_unit": declared_unit["evidence"] if declared_unit else None,
-                    "expiry_date": self._evidence_for(searchable, "valid") if expiry else None,
-                    "emission_value": self._evidence_for(searchable, "co2") if emission is not None else None,
-                },
+                "evidence": evidence,
                 "manual_review_required": True,
             },
         }
+
+    def _classify_document(self, text: str, certification_name: str) -> str:
+        haystack = f"{certification_name}\n{text}".lower()
+        if "environmental product declaration" in haystack or "epd" in haystack or "en 15804" in haystack:
+            return "epd"
+        if "fsc" in haystack or "pefc" in haystack:
+            return "chain_of_custody"
+        if "leed" in haystack or "breeam" in haystack:
+            return "green_building_certificate"
+        return "sustainability_certificate"
 
     def _find_certification(self, text: str) -> dict | None:
         match = re.search(

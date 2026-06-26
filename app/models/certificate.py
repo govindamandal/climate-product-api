@@ -19,5 +19,15 @@ class CertificateExtraction(Base):
     emission_value: Mapped[float | None] = mapped_column(Float)
     compliance_information: Mapped[str | None] = mapped_column(Text)
     extracted_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    document_type: Mapped[str | None] = mapped_column(String(80))
+    extraction_method: Mapped[str | None] = mapped_column(String(80))
+    extraction_confidence: Mapped[float | None] = mapped_column(Float)
+    field_confidence_json: Mapped[dict | None] = mapped_column(JSON)
+    evidence_json: Mapped[dict | None] = mapped_column(JSON)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(40), default="needs_review")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
