@@ -525,6 +525,108 @@ def test_organization_team_management_is_tenant_scoped(client: TestClient) -> No
     assert all(item["email"] != "member@team-alpha.example" for item in beta_team.json()["members"])
 
 
+def test_privacy_controls_and_data_requests_are_tenant_scoped(client: TestClient) -> None:
+    alpha = register(client, "tenant-privacy-alpha", "admin@privacy-alpha.example")
+    beta = register(client, "tenant-privacy-beta", "admin@privacy-beta.example")
+    alpha_headers = {"Authorization": f"Bearer {alpha['access_token']}"}
+    beta_headers = {"Authorization": f"Bearer {beta['access_token']}"}
+
+    defaults = client.get("/api/v1/organizations/privacy-settings", headers=alpha_headers)
+    assert defaults.status_code == 200, defaults.text
+    assert defaults.json()["data_region"] == "India"
+    assert defaults.json()["allow_ai_processing"] is True
+
+    updated = client.patch(
+        "/api/v1/organizations/privacy-settings",
+        headers=alpha_headers,
+        json={
+            "data_region": "India - Mumbai",
+            "retention_period_days": 1095,
+            "allow_ai_processing": False,
+            "require_verification_for_exports": True,
+            "data_processing_contact_email": "privacy@alpha.example",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data_region"] == "India - Mumbai"
+    assert updated.json()["allow_ai_processing"] is False
+
+    invited = client.post(
+        "/api/v1/organizations/invites",
+        headers=alpha_headers,
+        json={
+            "email": "member@privacy-alpha.example",
+            "full_name": "Privacy Contributor",
+            "role": "org_user",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "organization_slug": "tenant-privacy-alpha",
+            "email": "member@privacy-alpha.example",
+            "password": "ChangeMeNow!2026",
+        },
+    )
+    assert login.status_code == 200, login.text
+    user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    blocked_settings_update = client.patch(
+        "/api/v1/organizations/privacy-settings",
+        headers=user_headers,
+        json={"allow_ai_processing": True},
+    )
+    assert blocked_settings_update.status_code == 403
+
+    created_request = client.post(
+        "/api/v1/organizations/data-requests",
+        headers=user_headers,
+        json={
+            "request_type": "export",
+            "subject_type": "organization",
+            "reason": "Prepare a buyer diligence export.",
+        },
+    )
+    assert created_request.status_code == 201, created_request.text
+    request_id = created_request.json()["id"]
+    assert created_request.json()["requested_by_email"] == "member@privacy-alpha.example"
+
+    beta_requests = client.get("/api/v1/organizations/data-requests", headers=beta_headers)
+    assert beta_requests.status_code == 200
+    assert beta_requests.json()["total"] == 0
+
+    tenant_blocked_review = client.patch(
+        f"/api/v1/organizations/data-requests/{request_id}",
+        headers=beta_headers,
+        json={"status": "completed", "resolution_notes": "Wrong tenant."},
+    )
+    assert tenant_blocked_review.status_code == 404
+
+    user_blocked_review = client.patch(
+        f"/api/v1/organizations/data-requests/{request_id}",
+        headers=user_headers,
+        json={"status": "completed", "resolution_notes": "Done."},
+    )
+    assert user_blocked_review.status_code == 403
+
+    completed = client.patch(
+        f"/api/v1/organizations/data-requests/{request_id}",
+        headers=alpha_headers,
+        json={"status": "completed", "resolution_notes": "Export prepared and shared internally."},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["reviewed_by_email"] == "admin@privacy-alpha.example"
+
+    audit_logs = client.get(
+        "/api/v1/organizations/audit-logs?entity_type=data_governance_request",
+        headers=alpha_headers,
+    )
+    assert audit_logs.status_code == 200
+    assert audit_logs.json()["total"] >= 2
+
+
 def test_org_user_permissions_allow_contribution_but_block_admin_actions(client: TestClient) -> None:
     auth = register(client, "tenant-rbac", "admin@rbac.example")
     admin_headers = {"Authorization": f"Bearer {auth['access_token']}"}

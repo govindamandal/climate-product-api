@@ -9,14 +9,21 @@ from app.repositories.users import UserRepository
 from app.schemas.auth import UserRead
 from app.schemas.organization import (
     AuditLogList,
+    DataGovernanceRequestCreate,
+    DataGovernanceRequestList,
+    DataGovernanceRequestRead,
+    DataGovernanceRequestReview,
     InviteUserRequest,
     OrganizationRead,
+    OrganizationPrivacySettingsRead,
+    OrganizationPrivacySettingsUpdate,
     TeamMemberUpdate,
     TeamRead,
 )
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.email_service import EmailService
+from app.services.privacy_service import PrivacyService
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -62,6 +69,57 @@ def audit_logs(
         search=search,
     )
     return AuditLogList(items=items, total=total)
+
+
+@router.get("/privacy-settings", response_model=OrganizationPrivacySettingsRead)
+def privacy_settings(user: CurrentUser, db: DbSession) -> OrganizationPrivacySettingsRead:
+    return PrivacyService(db).get_settings(user)
+
+
+@router.patch(
+    "/privacy-settings",
+    response_model=OrganizationPrivacySettingsRead,
+    dependencies=[Depends(require_roles(UserRole.ORG_ADMIN, UserRole.SUPER_ADMIN))],
+)
+def update_privacy_settings(
+    payload: OrganizationPrivacySettingsUpdate,
+    user: CurrentUser,
+    db: DbSession,
+) -> OrganizationPrivacySettingsRead:
+    return PrivacyService(db).update_settings(user, payload)
+
+
+@router.get("/data-requests", response_model=DataGovernanceRequestList)
+def data_requests(
+    user: CurrentUser,
+    db: DbSession,
+    status: str | None = None,
+    request_type: str | None = None,
+) -> DataGovernanceRequestList:
+    return PrivacyService(db).list_requests(user, status=status, request_type=request_type)
+
+
+@router.post("/data-requests", response_model=DataGovernanceRequestRead, status_code=201)
+def create_data_request(
+    payload: DataGovernanceRequestCreate,
+    user: CurrentUser,
+    db: DbSession,
+) -> DataGovernanceRequestRead:
+    return PrivacyService(db).create_request(user, payload)
+
+
+@router.patch(
+    "/data-requests/{request_id}",
+    response_model=DataGovernanceRequestRead,
+    dependencies=[Depends(require_roles(UserRole.ORG_ADMIN, UserRole.SUPER_ADMIN))],
+)
+def review_data_request(
+    request_id: str,
+    payload: DataGovernanceRequestReview,
+    user: CurrentUser,
+    db: DbSession,
+) -> DataGovernanceRequestRead:
+    return PrivacyService(db).review_request(user, request_id, payload)
 
 
 @router.post(

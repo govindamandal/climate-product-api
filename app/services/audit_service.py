@@ -122,6 +122,12 @@ def describe_audit_log(log: AuditLog) -> str:
         return f"Imported {metadata.get('created', 0)} product(s)"
     if log.entity_type == "product_verification":
         return f"{action.title()} product verification as {metadata.get('status', 'submitted')}"
+    if log.entity_type == "privacy_settings":
+        return "Updated organization privacy controls"
+    if log.entity_type == "data_governance_request":
+        request_type = str(metadata.get("request_type", "data")).replace("_", " ")
+        status = metadata.get("status", "open")
+        return f"{action.title()} {request_type} request as {status}"
     if log.entity_type == "password_reset":
         return "Requested password reset instructions"
     if log.entity_type == "invite_acceptance":
