@@ -135,6 +135,12 @@ def describe_audit_log(log: AuditLog) -> str:
     if log.entity_type == "professional_report_pack":
         report_type = str(metadata.get("report_type", "professional")).replace("_", " ")
         return f"Created {report_type} report pack"
+    if log.entity_type == "integration_connection":
+        provider = metadata.get("provider", "integration")
+        connection_type = str(metadata.get("connection_type", "connection")).replace("_", " ")
+        return f"{action.title()} {provider} {connection_type} integration"
+    if log.entity_type == "integration_delivery":
+        return f"Created integration delivery for {metadata.get('event_type', 'event')}"
     if log.entity_type == "password_reset":
         return "Requested password reset instructions"
     if log.entity_type == "invite_acceptance":

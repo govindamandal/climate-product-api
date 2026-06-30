@@ -7,6 +7,7 @@ from app.api.v1 import (
     billing,
     certificates,
     compliance,
+    integrations,
     lca,
     operations,
     organizations,
@@ -26,6 +27,7 @@ api_router.include_router(analytics.router)
 api_router.include_router(ai.router)
 api_router.include_router(certificates.router)
 api_router.include_router(compliance.router)
+api_router.include_router(integrations.router)
 api_router.include_router(lca.router)
 api_router.include_router(verifications.router)
 api_router.include_router(operations.router)

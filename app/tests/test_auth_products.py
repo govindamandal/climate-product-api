@@ -1411,6 +1411,93 @@ def test_professional_report_packs_are_persisted_and_tenant_scoped(client: TestC
     assert isolated.json()["total"] == 0
 
 
+def test_integrations_manage_connections_and_queue_product_events(client: TestClient) -> None:
+    auth = register(client, "tenant-integrations", "admin@integrations.example")
+    headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    created = client.post(
+        "/api/v1/integrations/connections",
+        headers=headers,
+        json={
+            "name": "Procurement webhook",
+            "provider": "Buyer Portal",
+            "connection_type": "webhook",
+            "webhook_url": "https://buyer.example.com/material-events",
+            "webhook_secret": "super-secret-value",
+            "events": ["product.created", "environmental_record.created"],
+            "config": {"owner": "procurement", "api_token": "should-not-leak"},
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    connection = created.json()
+    assert connection["has_secret"] is True
+    assert connection["config_json"]["api_token"] == "********"
+
+    tested = client.post(
+        f"/api/v1/integrations/connections/{connection['id']}/test",
+        headers=headers,
+    )
+    assert tested.status_code == 200, tested.text
+    assert tested.json()["status"] == "delivered"
+    assert tested.json()["event_type"] == "integration.test"
+
+    product = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={
+            "name": "Integrated Cement",
+            "category": "Cement",
+            "description": "Cement exported through integration events.",
+            "manufacturer": "Integration Materials",
+            "country": "India",
+            "production_method": "Blended grinding",
+        },
+    )
+    assert product.status_code == 201, product.text
+
+    deliveries = client.get(
+        f"/api/v1/integrations/deliveries?connection_id={connection['id']}",
+        headers=headers,
+    )
+    assert deliveries.status_code == 200, deliveries.text
+    payload = deliveries.json()
+    assert payload["total"] == 2
+    statuses = {item["event_type"]: item["status"] for item in payload["items"]}
+    assert statuses["integration.test"] == "delivered"
+    assert statuses["product.created"] == "queued"
+
+    other_auth = register(client, "tenant-integrations-other", "admin@integrations-other.example")
+    other_headers = {"Authorization": f"Bearer {other_auth['access_token']}"}
+    isolated = client.get("/api/v1/integrations/connections", headers=other_headers)
+    assert isolated.status_code == 200, isolated.text
+    assert isolated.json()["total"] == 0
+
+
+def test_integrations_require_admin_role(client: TestClient) -> None:
+    auth = register(client, "tenant-integrations-rbac", "admin@integrations-rbac.example")
+    admin_headers = {"Authorization": f"Bearer {auth['access_token']}"}
+    invite = client.post(
+        "/api/v1/organizations/invites",
+        headers=admin_headers,
+        json={"email": "user@integrations-rbac.example", "full_name": "Org User", "role": "org_user"},
+    )
+    assert invite.status_code == 200, invite.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "user@integrations-rbac.example",
+            "password": "ChangeMeNow!2026",
+            "organization_slug": "tenant-integrations-rbac",
+        },
+    )
+    assert login.status_code == 200, login.text
+    user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.get("/api/v1/integrations/connections", headers=user_headers)
+
+    assert response.status_code == 403
+
+
 def test_lca_calculation_engine_persists_stage_totals_and_history(client: TestClient) -> None:
     auth = register(client, "tenant-lca", "admin@lca.example")
     other = register(client, "tenant-lca-other", "admin@lca-other.example")

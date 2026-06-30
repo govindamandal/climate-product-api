@@ -18,6 +18,7 @@ from app.schemas.product import (
 )
 from app.services.audit_service import AuditService
 from app.services.cache_service import CacheService, analytics_cache_key
+from app.services.integration_service import IntegrationService
 
 
 class ProductService:
@@ -90,6 +91,13 @@ class ProductService:
             actor_user_id=user.id,
             entity_id=product.id,
         )
+        IntegrationService(self.db).emit_event(
+            organization_id=user.organization_id,
+            event_type="product.created",
+            entity_type="product",
+            entity_id=product.id,
+            payload=self._product_event_payload(product),
+        )
         self.db.commit()
         self._invalidate_analytics(user)
         return self.get_product(user, product.id)
@@ -118,6 +126,13 @@ class ProductService:
             entity_id=product.id,
             metadata={"fields": list(payload.model_dump(exclude_unset=True).keys())},
         )
+        IntegrationService(self.db).emit_event(
+            organization_id=user.organization_id,
+            event_type="product.updated",
+            entity_type="product",
+            entity_id=product.id,
+            payload=self._product_event_payload(product),
+        )
         self.db.commit()
         self._invalidate_analytics(user)
         return self.get_product(user, product_id)
@@ -133,6 +148,13 @@ class ProductService:
             organization_id=user.organization_id,
             actor_user_id=user.id,
             entity_id=product.id,
+        )
+        IntegrationService(self.db).emit_event(
+            organization_id=user.organization_id,
+            event_type="environmental_record.created",
+            entity_type="product",
+            entity_id=product.id,
+            payload=self._product_event_payload(product),
         )
         self.db.commit()
         self._invalidate_analytics(user)
@@ -323,3 +345,14 @@ class ProductService:
     def _invalidate_analytics(self, user: User) -> None:
         if user.organization_id:
             CacheService().delete(analytics_cache_key(user.organization_id))
+
+    def _product_event_payload(self, product: Product) -> dict:
+        return {
+            "id": product.id,
+            "name": product.name,
+            "category": product.category,
+            "manufacturer": product.manufacturer,
+            "country": product.country,
+            "product_code": product.product_code,
+            "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+        }
